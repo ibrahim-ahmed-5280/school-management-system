@@ -1,0 +1,179 @@
+const Student = require('../models/Student');
+const Enrollment = require('../models/Enrollment');
+const TeacherAssignment = require('../models/TeacherAssignment');
+const Branch = require('../models/Branch');
+
+const applyBranchScope = (req, query) => {
+    if (req.scope === 'branch') query.branchId = req.branchId;
+    return query;
+};
+
+const canAccessStudent = (req, studentId) => {
+    if (req.role === 'student') return req.user.studentId?.toString() === studentId.toString();
+    if (req.role === 'parent') {
+        return (req.user.students || []).some((id) => id.toString() === studentId.toString());
+    }
+    return true;
+};
+
+// @desc    Admit a new student
+// @route   POST /api/students
+const admitStudent = async (req, res) => {
+    let { 
+        admissionNumber, firstName, lastName, DOB, gender, guardianInfo, 
+        classId, academicYearId, branchId
+    } = req.body;
+
+    try {
+        if (!admissionNumber || !firstName || !lastName || !classId || !academicYearId) {
+            return res.status(400).json({ message: 'Admission number, student name, class, and academic year are required' });
+        }
+
+        if (gender) gender = gender.charAt(0).toUpperCase() + gender.slice(1).toLowerCase();
+        
+        if (req.scope === 'branch') branchId = req.branchId;
+        else if (!branchId) {
+            const defaultBranch = await Branch.findOne({ tenantId: req.tenantId, isActive: true });
+            branchId = defaultBranch?._id;
+        }
+
+        const branch = branchId && await Branch.findOne({ _id: branchId, tenantId: req.tenantId, isActive: true });
+        if (!branch) return res.status(400).json({ message: 'A valid active branch is required' });
+
+        const student = await Student.create({
+            tenantId: req.tenantId,
+            branchId,
+            admissionNumber,
+            firstName,
+            lastName,
+            DOB,
+            gender,
+            guardianInfo
+        });
+
+        let enrollment;
+        try {
+            enrollment = await Enrollment.create({
+                tenantId: req.tenantId,
+                branchId,
+                studentId: student._id,
+                classId,
+                academicYearId,
+                status: 'Current'
+            });
+        } catch (error) {
+            await Student.deleteOne({ _id: student._id, tenantId: req.tenantId });
+            throw error;
+        }
+
+        // ... Fees and Response ...
+        res.status(201).json({ student, enrollment });
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
+};
+
+const getStudents = async (req, res) => {
+    try {
+        const query = applyBranchScope(req, { tenantId: req.tenantId });
+        const { q, classId, status } = req.query;
+        if (status) query.status = status;
+        if (q) {
+            const search = String(q).trim();
+            query.$or = [
+                { firstName: { $regex: search, $options: 'i' } },
+                { lastName: { $regex: search, $options: 'i' } },
+                { admissionNumber: { $regex: search, $options: 'i' } },
+                { studentCode: { $regex: search, $options: 'i' } }
+            ];
+        }
+        
+        if (req.role === 'teacher') {
+            const assignments = await TeacherAssignment.find({
+                tenantId: req.tenantId,
+                branchId: req.branchId,
+                teacherUserId: req.user._id,
+                isActive: true
+            });
+            const classIds = assignments.map(a => a.classId);
+            
+            const enrollments = await Enrollment.find({ 
+                tenantId: req.tenantId,
+                branchId: req.branchId,
+                classId: { $in: classIds }, 
+                status: { $in: ['Current', 'Active', 'active'] } 
+            }).select('studentId');
+            
+            query._id = { $in: enrollments.map(e => e.studentId) };
+        }
+        if (classId && req.role !== 'teacher') {
+            const enrollments = await Enrollment.find({
+                tenantId: req.tenantId,
+                ...(req.scope === 'branch' ? { branchId: req.branchId } : {}),
+                classId,
+                status: { $in: ['Current', 'Active', 'active'] }
+            }).select('studentId');
+            query._id = { $in: enrollments.map((enrollment) => enrollment.studentId) };
+        }
+
+        const students = await Student.find(query).sort({ createdAt: -1 });
+        res.json(students);
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
+};
+
+const getStudentDetails = async (req, res) => {
+    try {
+        if (!canAccessStudent(req, req.params.id)) {
+            return res.status(403).json({ message: 'Not authorized to access this student' });
+        }
+
+        const studentQuery = applyBranchScope(req, { _id: req.params.id, tenantId: req.tenantId });
+        const student = await Student.findOne(studentQuery);
+        if (!student) return res.status(404).json({ message: 'Student not found' });
+
+        const enrollmentQuery = applyBranchScope(req, {
+            tenantId: req.tenantId,
+            studentId: student._id,
+            status: { $in: ['Current', 'Active', 'active'] } 
+        });
+        const enrollment = await Enrollment.findOne(enrollmentQuery).populate('classId');
+        res.json({ student, enrollment });
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
+};
+
+const getStudentsByClass = async (req, res) => {
+    try {
+        const { classId } = req.params;
+        if (req.role === 'teacher') {
+            const assigned = await TeacherAssignment.exists({
+                tenantId: req.tenantId,
+                branchId: req.branchId,
+                teacherUserId: req.user._id,
+                classId,
+                isActive: true
+            });
+            if (!assigned) return res.status(403).json({ message: 'Not assigned to this class' });
+        }
+
+        const enrollmentQuery = applyBranchScope(req, {
+            classId, 
+            status: { $in: ['Current', 'Active', 'active'] },
+            tenantId: req.tenantId
+        });
+        const enrollments = await Enrollment.find(enrollmentQuery).populate('studentId');
+
+        const students = enrollments
+            .filter(e => e.studentId)
+            .map(e => e.studentId);
+            
+        res.json(students);
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
+};
+
+module.exports = { admitStudent, getStudents, getStudentDetails, getStudentsByClass };

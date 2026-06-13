@@ -1,0 +1,60 @@
+import axios from 'axios';
+import { clearStoredUser, getStoredUser } from '../utils/storage';
+
+const DEFAULT_API_ORIGIN = 'http://localhost:5035';
+export const API_ORIGIN = import.meta.env.VITE_API_ORIGIN || DEFAULT_API_ORIGIN;
+export const API_BASE_URL = import.meta.env.VITE_API_URL || `${API_ORIGIN}/api`;
+
+const api = axios.create({
+    baseURL: API_BASE_URL,
+    headers: {
+        'Content-Type': 'application/json'
+    }
+});
+
+const getLoginPathForRole = (role = '', path = '') => {
+    const normalizedRole = String(role).toLowerCase();
+    if (normalizedRole === 'teacher') return '/teacher/login';
+    if (normalizedRole === 'student') return '/student/login';
+    if (normalizedRole === 'registrar') return '/registrar/login';
+    if (normalizedRole === 'cashier') return '/cashier/login';
+    if (normalizedRole === 'finance_director') return '/finance/login';
+    if (normalizedRole === 'super_admin') return '/tenant/login';
+    if (normalizedRole === 'branch_admin') return '/branch/login';
+    if (normalizedRole === 'platform_owner') return '/platform/login';
+
+    if (path.startsWith('/teacher')) return '/teacher/login';
+    if (path.startsWith('/student')) return '/student/login';
+    if (path.startsWith('/registrar')) return '/registrar/login';
+    if (path.startsWith('/cashier')) return '/cashier/login';
+    if (path.startsWith('/finance')) return '/finance/login';
+    if (path.startsWith('/tenant')) return '/tenant/login';
+    if (path.startsWith('/platform')) return '/platform/login';
+    return '/branch/login';
+};
+
+api.interceptors.request.use(
+    (config) => {
+        const user = getStoredUser();
+        if (user?.token) {
+            config.headers.Authorization = `Bearer ${user.token}`;
+        }
+        return config;
+    },
+    (error) => Promise.reject(error)
+);
+
+api.interceptors.response.use(
+    (response) => response,
+    (error) => {
+        if (error.response && error.response.status === 401) {
+            const user = getStoredUser();
+            const path = window.location.pathname;
+            clearStoredUser();
+            window.location.href = getLoginPathForRole(user?.role, path);
+        }
+        return Promise.reject(error);
+    }
+);
+
+export default api;
