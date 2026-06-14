@@ -94,11 +94,23 @@ The platform owner manages tenants, plans, settings, monitoring, and platform-le
 
 From the backend folder:
 
+PowerShell:
+
 ```powershell
 cd backend
 $env:PLATFORM_OWNER_EMAIL="owner@example.com"
 $env:PLATFORM_OWNER_PASSWORD="Use-A-Strong-Password-123!"
 $env:PLATFORM_OWNER_NAME="Platform Owner"
+node create-platform-owner.js
+```
+
+Command Prompt:
+
+```cmd
+cd backend
+set "PLATFORM_OWNER_EMAIL=owner@example.com"
+set "PLATFORM_OWNER_PASSWORD=Use-A-Strong-Password-123!"
+set "PLATFORM_OWNER_NAME=Platform Owner"
 node create-platform-owner.js
 ```
 
@@ -301,3 +313,18 @@ Before real production use:
 - Run end-to-end tests for admission, promotion, results, attendance, invoices, and payment reversal.
 - Confirm mobile/tablet layout for all important roles.
 
+## 15. Finance Director Account
+
+The finance director is a separate account from the school super admin.
+
+1. Sign in as the school super admin.
+2. Open `School Admin > Users`.
+3. Select `Create Finance Director`.
+4. Enter the finance director's name, email, and temporary password.
+5. The finance director signs in at:
+
+```text
+http://localhost:5173/finance/login
+```
+
+Do not reuse or convert the school super-admin account. The school super admin cannot open finance routes, and the finance director cannot open the school-admin dashboard.

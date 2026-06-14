@@ -44,8 +44,9 @@ export const apiGetStudentRank = async (params) => {
     return response.data;
 };
 
-export const apiGetStudentAttendance = async () => {
-    const response = await http.get('/student/attendance');
+export const apiGetStudentAttendance = async (schoolYearId) => {
+    const params = schoolYearId ? { schoolYearId } : {};
+    const response = await http.get('/student/attendance', { params });
     return response.data;
 };
 

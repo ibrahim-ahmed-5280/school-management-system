@@ -210,28 +210,7 @@ const Reports = () => {
                                     </div>
                                 </div>
 
-                                <div className="space-y-4 pt-6 border-t border-slate-100">
-                                    {/* Bar 1 */}
-                                    <div className="space-y-1.5">
-                                        <div className="flex justify-between text-[10px] font-black text-slate-500 uppercase tracking-wider">
-                                            <span>Institutional Retention</span>
-                                            <span className="font-black text-xs" style={{ color: 'var(--primary)' }}>94.2%</span>
-                                        </div>
-                                        <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden">
-                                            <div className="h-full rounded-full w-[94.2%]" style={{ background: 'var(--primary)' }} />
-                                        </div>
-                                    </div>
-                                    {/* Bar 2 */}
-                                    <div className="space-y-1.5">
-                                        <div className="flex justify-between text-[10px] font-black text-slate-500 uppercase tracking-wider">
-                                            <span>Administrative Efficiency</span>
-                                            <span className="font-black text-xs" style={{ color: 'var(--secondary)' }}>88.7%</span>
-                                        </div>
-                                        <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden">
-                                            <div className="h-full rounded-full w-[88.7%]" style={{ background: 'var(--secondary)' }} />
-                                        </div>
-                                    </div>
-                                </div>
+
                             </div>
                         </div>
 

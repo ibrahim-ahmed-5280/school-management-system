@@ -49,8 +49,7 @@ const FinanceDashboard = () => {
     const stats = [
         { label: 'Total Collected', value: `$${totalCollected.toLocaleString()}`, icon: Wallet, color: 'text-green-600', bg: 'bg-green-50' },
         { label: 'Total Outstanding', value: `$${(outstanding?.totalOutstanding || 0).toLocaleString()}`, icon: AlertTriangle, color: 'text-amber-600', bg: 'bg-amber-50' },
-        { label: 'Unpaid Invoices', value: outstanding?.count || 0, icon: Users, color: 'text-blue-600', bg: 'bg-blue-50' },
-        { label: 'Growth rate', value: '+12.5%', icon: TrendingUp, color: 'text-purple-600', bg: 'bg-purple-50' },
+        { label: 'Unpaid Invoices', value: outstanding?.count || 0, icon: Users, color: 'text-blue-600', bg: 'bg-blue-50' }
     ];
 
     return (

@@ -8,16 +8,16 @@ import {
     BarChart3,
     ArrowUpCircle,
     ArrowRightLeft,
-    History,
     LogOut,
     Menu,
     X,
-    User as UserIcon
+    User as UserIcon,
+    ClipboardList
 } from 'lucide-react';
 import { useNavigate, useLocation, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useBranding } from '../context/BrandingContext';
-
+import { filterMenuByPermission } from '../utils/permissions';
 const TenantLayout = ({ children }) => {
     const { user, logout } = useAuth();
     const { branding } = useBranding();
@@ -25,17 +25,17 @@ const TenantLayout = ({ children }) => {
     const location = useLocation();
     const [sidebarOpen, setSidebarOpen] = useState(false);
 
-    const menuItems = [
-        { icon: LayoutDashboard, label: 'Dashboard', path: '/tenant' },
-        { icon: Palette, label: 'Branding', path: '/tenant/branding' },
-        { icon: MapPin, label: 'Branches', path: '/tenant/branches' },
-        { icon: Users, label: 'Users', path: '/tenant/users' },
-        { icon: Calendar, label: 'Academic Years', path: '/tenant/academic-years' },
-        { icon: BarChart3, label: 'Reports', path: '/tenant/reports' },
-        { icon: ArrowUpCircle, label: 'Promotion', path: '/tenant/enrollments/promote' },
-        { icon: ArrowRightLeft, label: 'Transfer', path: '/tenant/enrollments/transfer' },
-        { icon: History, label: 'Audit Logs', path: '/tenant/audit-logs' }
-    ];
+    const menuItems = filterMenuByPermission(user, [
+        { icon: LayoutDashboard, label: 'Dashboard', path: '/tenant', permission: 'tenant.dashboard.view' },
+        { icon: Palette, label: 'Branding', path: '/tenant/branding', permission: 'tenant.branding.view' },
+        { icon: MapPin, label: 'Branches', path: '/tenant/branches', permission: 'tenant.branches.view' },
+        { icon: Users, label: 'Users', path: '/tenant/users', permission: 'tenant.users.view' },
+        { icon: Calendar, label: 'Academic Years', path: '/tenant/academic-years', permission: 'tenant.academicYears.view' },
+        { icon: BarChart3, label: 'Reports', path: '/tenant/reports', permission: 'tenant.reports.view' },
+        { icon: ArrowUpCircle, label: 'Promotion', path: '/tenant/enrollments/promote', permission: 'tenant.promotions.run' },
+        { icon: ArrowRightLeft, label: 'Transfer', path: '/tenant/enrollments/transfer', permission: 'tenant.transfers.run' },
+        { icon: ClipboardList, label: 'Audit Logs', path: '/tenant/audit-logs', permission: 'tenant.audit.view' }
+    ]);
 
     const handleLogout = () => {
         logout();

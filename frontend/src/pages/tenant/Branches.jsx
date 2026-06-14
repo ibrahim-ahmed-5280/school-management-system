@@ -5,32 +5,35 @@ import {
   Plus, 
   Search, 
   Phone, 
-  Mail, 
-  Activity,
   Package, 
   Loader2,
-  CheckCircle2,
+  Pencil,
   X,
-  ExternalLink
+  ChevronDown,
 } from 'lucide-react';
 import tenantService from '../../services/tenantService';
+
+const EMPTY_BRANCH_FORM = {
+    name: '',
+    code: '',
+    address: '',
+    phone: '',
+    email: '',
+    logoUrl: '',
+    receiptFooter: ''
+};
 
 const Branches = () => {
     const [branches, setBranches] = useState([]);
     const [loading, setLoading] = useState(true);
     const [isModalOpen, setIsModalOpen] = useState(false);
-    const [formData, setFormData] = useState({
-        name: '',
-        code: '',
-        address: '',
-        phone: '',
-        email: '',
-        logoUrl: '',
-        receiptFooter: ''
-    });
+    const [editingBranch, setEditingBranch] = useState(null);
+    const [formData, setFormData] = useState(EMPTY_BRANCH_FORM);
     const [submitting, setSubmitting] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
     const [statusFilter, setStatusFilter] = useState('all');
+    const [branchAdmins, setBranchAdmins] = useState([]);
+    const [assignedAdminId, setAssignedAdminId] = useState('');
 
     const filteredBranches = branches.filter((branch) => {
         const matchesSearch = `${branch.name} ${branch.code}`.toLowerCase().includes(searchTerm.toLowerCase());
@@ -41,7 +44,17 @@ const Branches = () => {
 
     useEffect(() => {
         fetchBranches();
+        fetchBranchAdmins();
     }, []);
+
+    const fetchBranchAdmins = async () => {
+        try {
+            const response = await tenantService.getUsers({ role: 'branch_admin' });
+            setBranchAdmins(response.data || []);
+        } catch (error) {
+            console.error('Failed to load branch admin options:', error);
+        }
+    };
 
     const fetchBranches = async () => {
         try {
@@ -56,16 +69,54 @@ const Branches = () => {
         }
     };
 
-    const handleCreateBranch = async (e) => {
-        e.preventDefault();
+    const closeModal = () => {
+        setIsModalOpen(false);
+        setAssignedAdminId('');
+        setEditingBranch(null);
+        setFormData(EMPTY_BRANCH_FORM);
+    };
+
+    const openCreateModal = () => {
+        setEditingBranch(null);
+        setFormData(EMPTY_BRANCH_FORM);
+        setIsModalOpen(true);
+    };
+
+    const openEditModal = (branch) => {
+        setEditingBranch(branch);
+        setFormData({
+            name: branch.name || '',
+            code: branch.code || '',
+            address: branch.address || '',
+            phone: branch.phone || '',
+            email: branch.email || '',
+            logoUrl: branch.logoUrl || '',
+            receiptFooter: branch.receiptFooter || ''
+        });
+        const currentAdmin = branchAdmins.find(admin => admin.branchId === branch._id);
+        setAssignedAdminId(currentAdmin ? currentAdmin._id : '');
+        setIsModalOpen(true);
+    };
+
+    const handleSaveBranch = async (e) => {
+        e?.preventDefault?.();
         setSubmitting(true);
         try {
-            await tenantService.createBranch(formData);
+            let branchId = editingBranch?._id;
+            if (branchId) {
+                await tenantService.updateBranch(branchId, formData);
+            } else {
+                const res = await tenantService.createBranch(formData);
+                branchId = res.data._id;
+            }
+            if (assignedAdminId) {
+                await tenantService.assignBranchAdmin(branchId, assignedAdminId);
+            }
             await fetchBranches();
-            setIsModalOpen(false);
-            setFormData({ name: '', code: '', address: '', phone: '', email: '', logoUrl: '', receiptFooter: '' });
+            await fetchBranchAdmins();
+            closeModal();
         } catch (error) {
-            alert(error.response?.data?.message || 'Failed to create branch');
+            alert(error.response?.data?.message || `Failed to ${editingBranch ? 'update' : 'create'} branch`);
         } finally {
             setSubmitting(false);
         }
@@ -89,7 +140,7 @@ const Branches = () => {
                      <p className="text-slate-500 text-xs font-bold">Manage operational branches and physical institution locations.</p>
                 </div>
                 <button 
-                  onClick={() => setIsModalOpen(true)}
+                  onClick={openCreateModal}
                   className="h-10 px-5 bg-[var(--primary)] text-white rounded-lg font-black tracking-widest text-[10px] flex items-center gap-2 shadow-md hover:bg-[var(--primary-dark)] transition-all active:scale-95"
                 >
                     <Plus size={16} />
@@ -110,12 +161,18 @@ const Branches = () => {
                     />
                 </div>
                 <div className="h-6 w-px bg-slate-200" />
-                <button
-                    onClick={() => setStatusFilter((current) => current === 'all' ? 'active' : current === 'active' ? 'inactive' : 'all')}
-                    className="h-10 px-4 rounded-lg border border-slate-200 font-black text-[10px] tracking-widest uppercase text-slate-400 hover:text-slate-600 transition-colors"
-                >
-                    Status: {statusFilter}
-                </button>
+                <div className="relative">
+                    <select
+                        value={statusFilter}
+                        onChange={(e) => setStatusFilter(e.target.value)}
+                        className="h-10 pl-4 pr-8 rounded-lg border border-slate-200 font-black text-[10px] tracking-widest uppercase text-slate-400 bg-white outline-none appearance-none hover:text-slate-600 transition-colors cursor-pointer"
+                    >
+                        <option value="all">Status: All</option>
+                        <option value="active">Status: Active</option>
+                        <option value="inactive">Status: Inactive</option>
+                    </select>
+                    <ChevronDown className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={12} />
+                </div>
             </div>
 
             {/* Grid */}
@@ -162,12 +219,19 @@ const Branches = () => {
                             </div>
 
                             <div className="mt-4 pt-4 border-t border-slate-100 flex items-center justify-between">
-                                 <button 
-                                    onClick={() => toggleStatus(branch._id, branch.isActive)}
-                                    className={`text-[9px] font-black uppercase tracking-widest transition-colors ${branch.isActive ? 'text-rose-500 hover:text-rose-600' : 'text-emerald-500 hover:text-emerald-600'}`}
-                                 >
-                                    {branch.isActive ? 'Deactivate' : 'Activate'}
-                                 </button>
+                                <button
+                                    onClick={() => openEditModal(branch)}
+                                    className="inline-flex items-center gap-1.5 text-[9px] font-black uppercase tracking-widest text-[var(--primary)] hover:text-[var(--primary-dark)] transition-colors"
+                                >
+                                    <Pencil size={12} />
+                                    Edit
+                                </button>
+                                <button
+                                   onClick={() => toggleStatus(branch._id, branch.isActive)}
+                                   className={`text-[9px] font-black uppercase tracking-widest transition-colors ${branch.isActive ? 'text-rose-500 hover:text-rose-600' : 'text-emerald-500 hover:text-emerald-600'}`}
+                                >
+                                   {branch.isActive ? 'Deactivate' : 'Activate'}
+                                </button>
                             </div>
 
                             {/* Decorative Spark */}
@@ -177,22 +241,26 @@ const Branches = () => {
                 )}
             </div>
 
-            {/* Create Branch Modal */}
+            {/* Create/Edit Branch Modal */}
             {isModalOpen && (
                 <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 sm:p-12 animate-in fade-in duration-300">
-                    <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-md" onClick={() => setIsModalOpen(false)} />
+                    <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-md" onClick={closeModal} />
                     <div className="bg-white w-full max-w-xl rounded-2xl shadow-2xl relative z-10 overflow-hidden flex flex-col max-h-full animate-in zoom-in-95 duration-200">
                         <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
                             <div>
-                                <h3 className="text-xl font-black text-slate-900 tracking-tight">Provision New Campus</h3>
-                                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-0.5">Institutional Expansion Unit</p>
+                                <h3 className="text-xl font-black text-slate-900 tracking-tight">
+                                    {editingBranch ? 'Edit Campus Details' : 'Provision New Campus'}
+                                </h3>
+                                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-0.5">
+                                    {editingBranch ? 'Update Branch Profile' : 'Institutional Expansion Unit'}
+                                </p>
                             </div>
-                            <button onClick={() => setIsModalOpen(false)} className="p-2 hover:bg-slate-100 rounded-xl transition-all">
+                            <button onClick={closeModal} className="p-2 hover:bg-slate-100 rounded-xl transition-all">
                                 <X size={20} />
                             </button>
                         </div>
                         
-                        <form onSubmit={handleCreateBranch} className="flex-1 overflow-y-auto p-6 space-y-6 custom-scrollbar">
+                        <form id="branch-form" onSubmit={handleSaveBranch} className="flex-1 overflow-y-auto p-6 space-y-6 custom-scrollbar">
                             <div className="space-y-4">
                                 <div className="grid md:grid-cols-2 gap-4">
                                     <div className="space-y-1.5">
@@ -247,6 +315,7 @@ const Branches = () => {
                                             className="w-full h-10 bg-slate-50 border border-slate-200 rounded-lg px-3 font-semibold text-slate-900 outline-none focus:bg-white focus:ring-2 focus:ring-[var(--primary)]/10 transition-all text-sm"
                                             value={formData.email}
                                             onChange={(e) => setFormData({...formData, email: e.target.value})}
+
                                         />
                                      </div>
                                 </div>
@@ -263,21 +332,41 @@ const Branches = () => {
                                     />
                                 </div>
                             </div>
+
+                            <div className="space-y-1.5 border-t border-slate-100 pt-4">
+                                <label className="text-[10px] font-black uppercase tracking-wider text-slate-400 ml-1 font-bold">Assign Branch Admin</label>
+                                <div className="relative">
+                                    <select
+                                        className="w-full h-10 bg-slate-50 border border-slate-200 rounded-lg px-3 font-semibold text-slate-900 focus:bg-white focus:ring-2 focus:ring-[var(--primary)]/10 transition-all outline-none appearance-none text-sm cursor-pointer"
+                                        value={assignedAdminId}
+                                        onChange={(e) => setAssignedAdminId(e.target.value)}
+                                    >
+                                        <option value="">No branch admin assigned</option>
+                                        {branchAdmins.map(admin => (
+                                            <option key={admin._id} value={admin._id}>
+                                                {admin.name} ({admin.email})
+                                            </option>
+                                        ))}
+                                    </select>
+                                    <ChevronDown className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-350 pointer-events-none" size={14} />
+                                </div>
+                            </div>
                         </form>
 
                         <div className="p-4 bg-slate-50/50 border-t border-slate-100 flex justify-end gap-3">
                              <button 
-                                onClick={() => setIsModalOpen(false)}
+                                onClick={closeModal}
                                 className="px-5 font-black text-[10px] tracking-widest uppercase text-slate-400 hover:text-slate-600 transition-colors"
                              >
                                 Cancel
                              </button>
                              <button 
-                                onClick={handleCreateBranch}
+                                type="submit"
+                                form="branch-form"
                                 disabled={submitting}
                                 className="h-10 px-6 bg-[var(--primary)] text-white rounded-lg font-black tracking-widest text-[10px] uppercase flex items-center gap-2 shadow hover:bg-[var(--primary-dark)] transition-all disabled:opacity-50"
                              >
-                                {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : 'INITIALIZE CAMPUS'}
+                                {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : editingBranch ? 'SAVE CHANGES' : 'INITIALIZE CAMPUS'}
                              </button>
                         </div>
                     </div>

@@ -22,6 +22,7 @@ const getLoginPathForRole = (role = '', path = '') => {
     if (normalizedRole === 'super_admin') return '/tenant/login';
     if (normalizedRole === 'branch_admin') return '/branch/login';
     if (normalizedRole === 'platform_owner') return '/platform/login';
+    if (normalizedRole === 'parent') return '/login';
 
     if (path.startsWith('/teacher')) return '/teacher/login';
     if (path.startsWith('/student')) return '/student/login';
@@ -30,6 +31,7 @@ const getLoginPathForRole = (role = '', path = '') => {
     if (path.startsWith('/finance')) return '/finance/login';
     if (path.startsWith('/tenant')) return '/tenant/login';
     if (path.startsWith('/platform')) return '/platform/login';
+    if (path.startsWith('/parent')) return '/login';
     return '/branch/login';
 };
 

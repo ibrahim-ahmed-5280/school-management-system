@@ -13,6 +13,39 @@ const { generateBulkInvoices, getRevenueReport } = require('../services/financeS
 const mongoose = require('mongoose');
 
 const validateFinanceContext = async ({ tenantId, branchId, classId, academicYearId, studentId }) => {
+    if (branchId) {
+        const b = await Branch.findOne({ _id: branchId, tenantId });
+        if (!b) {
+            const error = new Error('Access denied for this finance resource.');
+            error.status = 403;
+            throw error;
+        }
+    }
+    if (classId) {
+        const c = await Class.findOne({ _id: classId, tenantId });
+        if (!c) {
+            const error = new Error('Access denied for this finance resource.');
+            error.status = 403;
+            throw error;
+        }
+    }
+    if (academicYearId) {
+        const y = await AcademicYear.findOne({ _id: academicYearId, tenantId });
+        if (!y) {
+            const error = new Error('Access denied for this finance resource.');
+            error.status = 403;
+            throw error;
+        }
+    }
+    if (studentId) {
+        const s = await Student.findOne({ _id: studentId, tenantId });
+        if (!s) {
+            const error = new Error('Access denied for this finance resource.');
+            error.status = 403;
+            throw error;
+        }
+    }
+
     const checks = [];
     if (branchId) checks.push(Branch.exists({ _id: branchId, tenantId, isActive: true }));
     if (classId) checks.push(Class.exists({ _id: classId, tenantId, ...(branchId ? { branchId } : {}) }));
@@ -96,21 +129,21 @@ const getFeeStructureById = asyncHandler(async (req, res) => {
         .populate('academicYearId', 'name');
 
     if (!structure) {
-        res.status(404);
-        throw new Error('Fee structure not found');
+        res.status(403);
+        throw new Error('Access denied for this finance resource.');
     }
     res.json({ success: true, data: structure });
 });
 
 const updateFeeStructure = asyncHandler(async (req, res) => {
-    const { feeItems } = req.body;
     const structure = await FeeStructure.findOne({ _id: req.params.id, tenantId: req.tenantId });
 
     if (!structure) {
-        res.status(404);
-        throw new Error('Fee structure not found');
+        res.status(403);
+        throw new Error('Access denied for this finance resource.');
     }
 
+    const { feeItems } = req.body;
     const before = JSON.parse(JSON.stringify(structure));
     
     if (feeItems) {
@@ -135,8 +168,8 @@ const updateFeeStructure = asyncHandler(async (req, res) => {
 const deleteFeeStructure = asyncHandler(async (req, res) => {
     const structure = await FeeStructure.findOne({ _id: req.params.id, tenantId: req.tenantId });
     if (!structure) {
-        res.status(404);
-        throw new Error('Fee structure not found');
+        res.status(403);
+        throw new Error('Access denied for this finance resource.');
     }
 
     await structure.deleteOne();
@@ -190,20 +223,42 @@ const updateFinancePolicies = asyncHandler(async (req, res) => {
 });
 
 const triggerBulkInvoices = asyncHandler(async (req, res) => {
-    const { branchId, academicYearId, classId, studentId } = req.body;
+    const { branchId, academicYearId, classId, studentId, dueDate } = req.body;
 
     if (!academicYearId) {
         res.status(400);
         throw new Error('academicYearId is required for invoice generation');
     }
-    await validateFinanceContext({ tenantId: req.tenantId, branchId, academicYearId, classId, studentId });
+
+    // Check target: must have classId or studentId. If both are missing, fail.
+    if (!classId && !studentId) {
+        res.status(400);
+        throw new Error('Invalid invoice generation target.');
+    }
+
+    // Validate dueDate if provided
+    if (dueDate && isNaN(Date.parse(dueDate))) {
+        res.status(400);
+        throw new Error('Invalid due date format.');
+    }
+
+    try {
+        await validateFinanceContext({ tenantId: req.tenantId, branchId, classId, academicYearId, studentId });
+    } catch (error) {
+        if (error.status === 403) {
+            throw error; // keep 403 Access denied
+        }
+        res.status(400);
+        throw new Error('Invalid invoice generation target.');
+    }
 
     const result = await generateBulkInvoices({
         tenantId: req.tenantId,
         branchId,
         academicYearId,
         classId,
-        studentId
+        studentId,
+        dueDate
     });
 
     await logActivity({
@@ -244,10 +299,28 @@ const getInvoiceById = asyncHandler(async (req, res) => {
         .populate('academicYearId', 'name');
 
     if (!invoice) {
-        res.status(404);
-        throw new Error('Invoice not found');
+        res.status(403);
+        throw new Error('Access denied for this finance resource.');
     }
-    res.json({ success: true, data: invoice });
+
+    // Fetch payments for this invoice under the same tenant
+    const payments = await Payment.find({ invoiceId: invoice._id, tenantId: req.tenantId })
+        .populate('recordedBy', 'name')
+        .sort({ createdAt: -1 });
+
+    const formattedPayments = payments.map(p => ({
+        amount: p.amount,
+        method: p.method,
+        reference: p.reference,
+        status: p.status,
+        recordedBy: p.recordedBy ? p.recordedBy.name : 'System',
+        date: p.createdAt
+    }));
+
+    const invoiceObj = invoice.toObject();
+    invoiceObj.payments = formattedPayments;
+
+    res.json({ success: true, data: invoiceObj });
 });
 
 // ==========================================
@@ -328,7 +401,49 @@ const getOutstandingBalances = asyncHandler(async (req, res) => {
         }
     ]);
 
-    res.json({ success: true, data: outstanding[0] || { totalOutstanding: 0, count: 0 } });
+    const findQuery = { tenantId: req.tenantId, status: { $ne: 'PAID' } };
+    if (branchId) findQuery.branchId = branchId;
+    if (academicYearId) findQuery.academicYearId = academicYearId;
+
+    const debtors = await Invoice.find(findQuery)
+        .sort({ balance: -1 })
+        .limit(10)
+        .populate('studentId', 'firstName lastName admissionNumber')
+        .populate('branchId', 'name')
+        .populate('academicYearId', 'name');
+
+    const formattedDebtors = [];
+    for (const d of debtors) {
+        let className = '-';
+        if (d.studentId) {
+            const enrollment = await Enrollment.findOne({
+                tenantId: req.tenantId,
+                studentId: d.studentId._id,
+                academicYearId: d.academicYearId._id
+            }).populate('classId', 'name');
+            if (enrollment && enrollment.classId) {
+                className = enrollment.classId.name;
+            }
+        }
+        formattedDebtors.push({
+            studentName: d.studentId ? `${d.studentId.firstName} ${d.studentId.lastName}` : 'Unknown Student',
+            admissionNumber: d.studentId ? d.studentId.admissionNumber : '-',
+            branchName: d.branchId ? d.branchId.name : '-',
+            className,
+            balance: d.balance,
+            oldestDueDate: d.dueDate || d.createdAt,
+            count: 1
+        });
+    }
+
+    res.json({ 
+        success: true, 
+        data: { 
+            totalOutstanding: outstanding[0]?.totalOutstanding || 0, 
+            count: outstanding[0]?.count || 0,
+            debtors: formattedDebtors
+        } 
+    });
 });
 
 // ==========================================
@@ -338,17 +453,20 @@ const getOutstandingBalances = asyncHandler(async (req, res) => {
 const getReceiptBranding = asyncHandler(async (req, res) => {
     const branch = await Branch.findOne({ _id: req.params.branchId, tenantId: req.tenantId });
     if (!branch) {
-        res.status(404);
-        throw new Error('Branch not found');
+        res.status(403);
+        throw new Error('Access denied for this finance resource.');
     }
 
     res.json({
         success: true,
         data: {
             branchId: branch._id,
+            name: branch.name,
             branchName: branch.name,
-            logoUrl: branch.logoUrl,
-            receiptFooter: branch.receiptFooter
+            address: branch.address || '',
+            phone: branch.phone || '',
+            logoUrl: branch.logoUrl || '',
+            receiptFooter: branch.receiptFooter || ''
         }
     });
 });

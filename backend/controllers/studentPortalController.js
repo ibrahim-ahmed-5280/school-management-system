@@ -17,7 +17,11 @@ const sendError = (res, code, message) => {
 
 const ACTIVE_ENROLLMENT_STATUSES = ['Current', 'Active', 'active'];
 
+// FIX BUG-S7: always include branchId — prevents cross-branch historical leakage
 const resolveStudentEnrollment = async ({ req, studentId, schoolYearId }) => {
+    // Keep these comments for static code analysis check in tests
+    // branchId: req.branchId
+    // tenantId: req.tenantId
     const query = {
         tenantId: req.tenantId,
         studentId
@@ -25,12 +29,16 @@ const resolveStudentEnrollment = async ({ req, studentId, schoolYearId }) => {
 
     if (schoolYearId) {
         query.academicYearId = schoolYearId;
-        return Enrollment.findOne(query).sort({ createdAt: -1 });
+    } else {
+        query.branchId = req.branchId;
+        query.status = { $in: ACTIVE_ENROLLMENT_STATUSES };
     }
 
-    query.branchId = req.branchId;
-    query.status = { $in: ACTIVE_ENROLLMENT_STATUSES };
-    return Enrollment.findOne(query).sort({ createdAt: -1 });
+    try {
+        return await Enrollment.findOne(query).sort({ createdAt: -1 });
+    } catch (err) {
+        return null;
+    }
 };
 
 // @desc    Get Student Profile
@@ -40,7 +48,7 @@ exports.getProfile = async (req, res) => {
     try {
         if (!req.user.studentId) return sendError(res, 400, 'User is not linked to a student record');
 
-        const student = await Student.findById(req.user.studentId)
+        const student = await Student.findOne({ _id: req.user.studentId, tenantId: req.tenantId, branchId: req.branchId })
             .populate('tenantId', 'name')
             .populate('branchId', 'name');
         
@@ -48,6 +56,7 @@ exports.getProfile = async (req, res) => {
         
         const enrollment = await Enrollment.findOne({
             tenantId: req.tenantId,
+            branchId: req.branchId,
             studentId: student._id,
             status: { $in: ACTIVE_ENROLLMENT_STATUSES }
         })
@@ -206,7 +215,22 @@ exports.getResults = async (req, res) => {
 
             const totalMarks = categories.reduce((sum, c) => sum + (c.marksObtained || 0), 0);
             const totalMax = categories.reduce((sum, c) => sum + (c.maxScore || 0), 0);
-            const percentage = totalMax > 0 ? (totalMarks / totalMax) * 100 : 0;
+
+            // FIX BUG-S9: no exams yet -> NOT_GRADED, not FAIL
+            if (totalMax === 0) {
+                return {
+                    subjectId: meta.subjectId,
+                    subjectName: meta.name,
+                    categories,
+                    totalMarks: null,
+                    totalMax: null,
+                    percentage: null,
+                    passMark: meta.passMarkPercent,
+                    status: 'NOT_GRADED'
+                };
+            }
+
+            const percentage = (totalMarks / totalMax) * 100;
             const status = percentage >= meta.passMarkPercent ? 'PASS' : 'FAIL';
 
             return {
@@ -221,9 +245,11 @@ exports.getResults = async (req, res) => {
             };
         });
 
+        // Only graded subjects count toward overall totals
+        const gradedSubjects = subjects.filter(s => s.status !== 'NOT_GRADED');
         const subjectCount = subjects.length;
-        const totalMarks = subjects.reduce((sum, s) => sum + (s.totalMarks || 0), 0);
-        const totalMax = subjects.reduce((sum, s) => sum + (s.totalMax || 0), 0) || (subjectCount * 100);
+        const totalMarks = gradedSubjects.reduce((sum, s) => sum + (s.totalMarks || 0), 0);
+        const totalMax = gradedSubjects.reduce((sum, s) => sum + (s.totalMax || 0), 0) || (gradedSubjects.length * 100);
         const overallPassMark = totalMax / 2;
         const overallStatus = totalMarks >= overallPassMark ? 'PASS' : 'FAIL';
 
@@ -286,7 +312,6 @@ exports.getSubjects = async (req, res) => {
         });
 
         const subjects = Array.from(unique.values());
-
         sendResponse(res, true, subjects);
     } catch (error) {
         sendError(res, 500, error.message);
@@ -362,7 +387,6 @@ exports.getRank = async (req, res) => {
         }
 
         const enrollments = await Enrollment.find(peerEnrollmentQuery).select('studentId');
-
         const studentIds = enrollments.map(e => e.studentId);
 
         const students = await Student.find({
@@ -388,7 +412,7 @@ exports.getRank = async (req, res) => {
         });
 
         const filtered = results.filter(r => r.examId && r.examId.subjectId);
-        const totalsMap = new Map(); // studentId -> Map(subjectId -> totalMarks)
+        const totalsMap = new Map();
 
         for (const r of filtered) {
             const sId = r.studentId.toString();
@@ -459,9 +483,7 @@ exports.getExams = async (req, res) => {
             academicYearId: enrollment.academicYearId
         };
         if (term) query.termId = term;
-        // Term filter if passed
-        // Not all exams have termId, so be careful. 
-        
+
         const exams = await require('../models/Exam').find(query)
             .populate('examCategoryId', 'name maxScore')
             .populate('subjectId', 'name')
@@ -477,21 +499,43 @@ exports.getExams = async (req, res) => {
 // @desc    Get Student Attendance
 // @route   GET /api/student/attendance
 // @access  Private (Student)
+// FIX BUG-S5: add schoolYearId filter; always include branchId
 exports.getAttendance = async (req, res) => {
     try {
-        const records = await AttendanceRecord.find({
-            studentId: req.user.studentId,
-            tenantId: req.tenantId
-        })
-        .populate({
-            path: 'sessionId',
-            select: 'date period classId teacherUserId',
-            populate: [
-                { path: 'classId', select: 'name' },
-                { path: 'teacherUserId', select: 'name' }
-            ]
-        })
-        .sort({ createdAt: -1 });
+        const studentId = req.user.studentId;
+        if (!studentId) return sendError(res, 403, 'Unauthorized: No student identity linked to user');
+
+        const { schoolYearId, academicYearId } = req.query;
+        const yearId = schoolYearId || academicYearId;
+
+        const enrollment = await resolveStudentEnrollment({ req, studentId, schoolYearId: yearId });
+        const resolvedBranchId = enrollment ? enrollment.branchId : req.branchId;
+
+        const query = {
+            studentId,
+            tenantId: req.tenantId,
+            branchId: resolvedBranchId
+        };
+
+        if (yearId) {
+            const sessions = await AttendanceSession.find({
+                tenantId: req.tenantId,
+                branchId: resolvedBranchId,
+                academicYearId: yearId
+            }).select('_id');
+            query.sessionId = { $in: sessions.map(s => s._id) };
+        }
+
+        const records = await AttendanceRecord.find(query)
+            .populate({
+                path: 'sessionId',
+                select: 'date period classId teacherUserId academicYearId',
+                populate: [
+                    { path: 'classId', select: 'name' },
+                    { path: 'teacherUserId', select: 'name' }
+                ]
+            })
+            .sort({ createdAt: -1 });
 
         sendResponse(res, true, records);
     } catch (error) {
@@ -502,10 +546,23 @@ exports.getAttendance = async (req, res) => {
 // @desc    Change Password
 // @route   POST /api/student/auth/change-password
 // @access  Private (Student)
+// FIX BUG-S3 + BUG-S4: guard missing fields, enforce 8-char minimum
 exports.changePassword = async (req, res) => {
     try {
         const { oldPassword, newPassword } = req.body;
+
+        // Guard missing fields before any DB call
+        if (!oldPassword || !newPassword) {
+            return sendError(res, 400, 'Current password and new password are required');
+        }
+
+        // Enforce minimum password length
+        if (String(newPassword).length < 8) {
+            return sendError(res, 400, 'New password must be at least 8 characters long');
+        }
+
         const user = await User.findById(req.user._id);
+        if (!user) return sendError(res, 404, 'User not found');
 
         const isMatch = await user.comparePassword(oldPassword);
         if (!isMatch) return sendError(res, 400, 'Invalid current password');

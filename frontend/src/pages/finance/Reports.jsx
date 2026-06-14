@@ -2,7 +2,7 @@ import React, { useCallback, useState, useEffect } from 'react';
 import { getRevenueReport } from '../../services/api/finance.api';
 import { getBranches, getAcademicYears } from '../../services/api/tenant.api';
 import { Card, Select, Button } from '../../components/ui';
-import { PieChart, Download } from 'lucide-react';
+import { Download } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 
 const Reports = () => {
@@ -30,7 +30,6 @@ const Reports = () => {
         setLoading(true);
         try {
             const data = await getRevenueReport(filters);
-            // Expecting array of objects { _id: 'Key', totalRevenue: 1000, outstanding: 500 }
             setReportData(Array.isArray(data) ? data : data.data || []);
         } catch (e) {
             console.error(e);
@@ -69,13 +68,13 @@ const Reports = () => {
                     />
                     <Select 
                         label="Filter Branch"
-                        options={branches}
+                        options={[{ label: 'All Branches', value: '' }, ...branches]}
                         value={filters.branchId}
                         onChange={e => setFilters({...filters, branchId: e.target.value})}
                     />
                     <Select 
                         label="Filter Year"
-                        options={years}
+                        options={[{ label: 'All Years', value: '' }, ...years]}
                         value={filters.academicYearId}
                         onChange={e => setFilters({...filters, academicYearId: e.target.value})}
                     />
@@ -95,8 +94,9 @@ const Reports = () => {
                                 contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }}
                             />
                             <Legend />
-                            <Bar dataKey="totalRevenue" name="Collected" fill="var(--primary)" radius={[4, 4, 0, 0]} />
-                            <Bar dataKey="outstanding" name="Outstanding" fill="#f43f5e" radius={[4, 4, 0, 0]} />
+                            <Bar dataKey="totalRevenue" name="Billed" fill="#3b82f6" radius={[4, 4, 0, 0]} />
+                            <Bar dataKey="totalPaid" name="Collected" fill="#10b981" radius={[4, 4, 0, 0]} />
+                            <Bar dataKey="totalBalance" name="Outstanding" fill="#ef4444" radius={[4, 4, 0, 0]} />
                         </BarChart>
                      </ResponsiveContainer>
                  </div>
@@ -108,21 +108,23 @@ const Reports = () => {
                         <thead className="bg-slate-50 sticky top-0">
                             <tr>
                                 <th className="text-left py-2 px-3 text-slate-500 font-bold uppercase text-xs">Category</th>
+                                <th className="text-right py-2 px-3 text-slate-500 font-bold uppercase text-xs">Billed</th>
                                 <th className="text-right py-2 px-3 text-slate-500 font-bold uppercase text-xs">Collected</th>
-                                <th className="text-right py-2 px-3 text-slate-500 font-bold uppercase text-xs">Pending</th>
+                                <th className="text-right py-2 px-3 text-slate-500 font-bold uppercase text-xs">Outstanding</th>
                             </tr>
                         </thead>
                         <tbody className="divide-y">
                             {reportData.map((row, idx) => (
                                 <tr key={idx} className="hover:bg-slate-50">
                                     <td className="py-3 px-3 font-medium text-slate-800">{row._id || 'Unknown'}</td>
-                                    <td className="py-3 px-3 text-right font-bold text-emerald-600">${(row.totalRevenue || 0).toLocaleString()}</td>
-                                    <td className="py-3 px-3 text-right font-bold text-rose-500">${(row.outstanding || 0).toLocaleString()}</td>
+                                    <td className="py-3 px-3 text-right font-bold text-blue-600">${(row.totalRevenue || 0).toLocaleString()}</td>
+                                    <td className="py-3 px-3 text-right font-bold text-emerald-600">${(row.totalPaid || 0).toLocaleString()}</td>
+                                    <td className="py-3 px-3 text-right font-bold text-rose-500">${(row.totalBalance || 0).toLocaleString()}</td>
                                 </tr>
                             ))}
                             {reportData.length === 0 && (
                                 <tr>
-                                    <td colSpan="3" className="py-8 text-center text-slate-400">No data available for selected period</td>
+                                    <td colSpan="4" className="py-8 text-center text-slate-400">No data available for selected period</td>
                                 </tr>
                             )}
                         </tbody>
@@ -134,5 +136,3 @@ const Reports = () => {
 };
 
 export default Reports;
-
-

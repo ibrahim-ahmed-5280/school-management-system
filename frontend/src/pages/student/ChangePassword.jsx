@@ -21,8 +21,8 @@ const ChangePassword = () => {
             return setError('New passwords do not match');
         }
 
-        if (newPassword.length < 4) {
-             return setError('Password must be at least 4 characters');
+        if (newPassword.length < 8) {
+             return setError('Password must be at least 8 characters');
         }
 
         setLoading(true);
@@ -81,7 +81,7 @@ const ChangePassword = () => {
                              <label className="text-xs font-black text-slate-400 uppercase tracking-widest ml-1">New Password</label>
                             <Input
                                 type="password"
-                                placeholder="Min. 4 characters"
+                                placeholder="Min. 8 characters"
                                 value={newPassword}
                                 onChange={(e) => setNewPassword(e.target.value)}
                                 className="h-14 bg-slate-50 border-transparent focus:bg-white focus:border-[var(--primary)] focus:ring-4 focus:ring-[var(--primary)]/10 rounded-2xl font-semibold transition-all shadow-inner"

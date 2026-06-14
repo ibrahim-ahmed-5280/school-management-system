@@ -26,11 +26,16 @@ const tenantService = {
   getUser: (id) => api.get(`/tenant/users/${id}`),
   updateUser: (id, data) => api.put(`/tenant/users/${id}`, data),
   updateUserStatus: (id, isActive) => api.patch(`/tenant/users/${id}/status`, { isActive }),
+  resetUserPassword: (id, password) => api.patch(`/tenant/users/${id}/password`, password ? { password } : {}),
+  getPermissionCatalog: () => api.get('/tenant/permissions/catalog'),
+  getUserPermissions: (id) => api.get(`/tenant/users/${id}/permissions`),
+  updateUserPermissions: (id, data) => api.put(`/tenant/users/${id}/permissions`, data),
 
   // Academic Years
   getAcademicYears: () => api.get('/tenant/academic-years'),
   createAcademicYear: (data) => api.post('/tenant/academic-years', data),
   updateAcademicYear: (id, data) => api.put(`/tenant/academic-years/${id}`, data),
+  deleteAcademicYear: (id) => api.delete(`/tenant/academic-years/${id}`),
   setCurrentYear: (id) => api.patch(`/tenant/academic-years/${id}/set-current`),
 
   // Reports
@@ -43,10 +48,7 @@ const tenantService = {
   searchStudents: (q) => api.get('/students', { params: { q } }),
 
   // Audit Logs
-  getAuditLogs: (filters = {}) => {
-    const params = new URLSearchParams(filters).toString();
-    return api.get(`/tenant/audit-logs?${params}`);
-  }
+  getAuditLogs: (filters = {}) => api.get('/tenant/audit', { params: filters })
 };
 
 export default tenantService;

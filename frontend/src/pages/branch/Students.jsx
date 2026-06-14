@@ -39,6 +39,11 @@ const Students = () => {
                 <h1 className="text-2xl font-bold">Student Directory</h1>
             </div>
 
+            <div className="bg-indigo-50 border border-indigo-150 text-indigo-900 px-4 py-3 rounded-xl text-xs sm:text-sm flex items-center gap-2.5 shadow-xs">
+                <span className="h-2 w-2 rounded-full bg-indigo-500 shrink-0"></span>
+                <p className="font-semibold text-indigo-950">Student admission and profile editing are handled by the Registrar.</p>
+            </div>
+
             <div className="flex flex-wrap gap-4 bg-white p-4 rounded-lg border shadow-sm items-end">
                 <div className="w-full sm:w-auto min-w-[200px]">
                     <label className="text-sm font-medium text-slate-700 mb-1 block">Filter by Class</label>

@@ -160,22 +160,45 @@ exports.getReceipt = async (req, res) => {
             tenantId: req.user.tenantId,
             branchId: req.user.branchId
         }).populate('invoiceId')
-          .populate('recordedBy', 'firstName lastName');
+          .populate('recordedBy', 'name firstName lastName email');
 
         if (!payment) {
             return res.status(404).json({ success: false, message: 'Payment not found.' });
         }
 
+        if (payment.status !== 'ACTIVE') {
+            return res.status(400).json({
+                success: false,
+                message: 'Receipt is only available for completed payments.'
+            });
+        }
+
         const invoice = payment.invoiceId;
         
         // Fetch Student Info
-        const student = await Student.findById(invoice.studentId).select('firstName lastName admissionNumber');
+        const student = await Student.findOne({ _id: invoice.studentId, tenantId: req.user.tenantId, branchId: req.user.branchId }).select('firstName lastName admissionNumber');
 
         // Fetch Branch Branding
-        const branch = await Branch.findById(req.user.branchId).select('name logoUrl address contactInfo receiptFooter');
+        const branch = await Branch.findOne({ _id: req.user.branchId, tenantId: req.user.tenantId }).select('name logoUrl address contactInfo receiptFooter');
+
+        const formatRecordedBy = (recordedBy) => {
+            if (!recordedBy) return 'System User';
+            if (recordedBy.name && String(recordedBy.name).trim()) {
+                return String(recordedBy.name).trim();
+            }
+            const first = recordedBy.firstName ? String(recordedBy.firstName).trim() : '';
+            const last = recordedBy.lastName ? String(recordedBy.lastName).trim() : '';
+            if (first || last) {
+                return `${first} ${last}`.trim();
+            }
+            if (recordedBy.email && String(recordedBy.email).trim()) {
+                return String(recordedBy.email).trim();
+            }
+            return 'System User';
+        };
 
         const receiptPayload = {
-            receiptNo: payment._id, // Simple ID for now
+            receiptNo: payment.receiptNumber || payment._id,
             dateTime: payment.createdAt,
             branch: {
                 name: branch.name,
@@ -201,7 +224,7 @@ exports.getReceipt = async (req, res) => {
                 method: payment.method,
                 reference: payment.reference,
                 createdAt: payment.createdAt,
-                recordedBy: payment.recordedBy ? `${payment.recordedBy.firstName} ${payment.recordedBy.lastName}` : 'System'
+                recordedBy: formatRecordedBy(payment.recordedBy)
             }
         };
 
@@ -241,7 +264,7 @@ exports.getPayments = async (req, res) => {
             .sort({ createdAt: -1 })
             .limit(100)
             .populate('invoiceId', 'balance totalAmount')
-            .populate('recordedBy', 'firstName lastName');
+            .populate('recordedBy', 'name firstName lastName email');
 
         res.json({ success: true, data: payments });
     } catch (error) {
@@ -285,3 +308,92 @@ exports.reversePayment = async (req, res) => {
         res.status(error.status || 500).json({ success: false, message: error.message });
     }
 };
+
+// @desc    Get Cashier Dashboard Stats
+// @route   GET /api/cashier/dashboard/stats
+// @access  Private (Cashier)
+exports.getDashboardStats = async (req, res) => {
+    try {
+        const tenantId = req.user.tenantId;
+        const branchId = req.user.branchId;
+
+        // Timezone safe local day boundaries on server
+        const startOfDay = new Date();
+        startOfDay.setHours(0, 0, 0, 0);
+
+        const endOfDay = new Date();
+        endOfDay.setHours(23, 59, 59, 999);
+
+        // Sum of payment amounts today in this branch/tenant
+        const todayPayments = await Payment.aggregate([
+            {
+                $match: {
+                    tenantId: new mongoose.Types.ObjectId(tenantId),
+                    branchId: new mongoose.Types.ObjectId(branchId),
+                    status: { $ne: 'REVERSED' }, // exclude reversed payments
+                    createdAt: { $gte: startOfDay, $lte: endOfDay }
+                }
+            },
+            {
+                $group: {
+                    _id: null,
+                    collectedToday: { $sum: '$amount' },
+                    transactionCountToday: { $sum: 1 }
+                }
+            }
+        ]);
+
+        const collectedToday = todayPayments[0]?.collectedToday || 0;
+        const transactionCountToday = todayPayments[0]?.transactionCountToday || 0;
+
+        // Top 5 recent transactions
+        const recentTransactions = await Payment.find({
+            tenantId,
+            branchId
+        })
+        .sort({ createdAt: -1 })
+        .limit(5)
+        .populate('invoiceId', 'balance totalAmount')
+        .populate('recordedBy', 'firstName lastName');
+
+        // Pending Invoices Count (status NOT PAID, NOT VOID)
+        const pendingInvoicesCount = await Invoice.countDocuments({
+            tenantId,
+            branchId,
+            status: { $nin: ['PAID', 'VOID'] }
+        });
+
+        // Total Outstanding (sum of balance on invoices NOT VOID)
+        const outstandingInvoices = await Invoice.aggregate([
+            {
+                $match: {
+                    tenantId: new mongoose.Types.ObjectId(tenantId),
+                    branchId: new mongoose.Types.ObjectId(branchId),
+                    status: { $ne: 'VOID' }
+                }
+            },
+            {
+                $group: {
+                    _id: null,
+                    totalOutstanding: { $sum: '$balance' }
+                }
+            }
+        ]);
+
+        const totalOutstandingForBranch = outstandingInvoices[0]?.totalOutstanding || 0;
+
+        res.json({
+            success: true,
+            data: {
+                collectedToday,
+                transactionCountToday,
+                recentTransactions,
+                pendingInvoicesCount,
+                totalOutstandingForBranch
+            }
+        });
+    } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+};
+

@@ -19,7 +19,7 @@ const addStaff = async (req, res) => {
 
         const normalizedEmail = String(email).trim().toLowerCase();
         const userExists = await User.findOne({ tenantId: req.tenantId, email: normalizedEmail });
-        if (userExists) return res.status(400).json({ message: 'User already exists' });
+        if (userExists) return res.status(409).json({ message: 'Email already exists for this school.' });
 
         // Enforce branch context for branch-scoped callers
         let targetBranchId = branchId;

@@ -6,12 +6,12 @@ const {
     createPayment,
     getReceipt,
     getPayments,
-    reversePayment
+    reversePayment,
+    getDashboardStats
 } = require('../controllers/cashierController');
 
 const { protect, authorize, requireScope, tenantGuard, branchGuard } = require('../middleware/auth');
-
-// Global Cashier Middleware Stack
+const { requirePermission } = require('../middleware/permissions');
 // 1. Authenticated
 // 2. Role = CASHIER
 // 3. Scope = BRANCH
@@ -23,16 +23,19 @@ router.use(requireScope('branch'));
 router.use(tenantGuard);
 router.use(branchGuard);
 
+// --- Dashboard ---
+router.get('/dashboard/stats', requirePermission('cashier.dashboard.view'), getDashboardStats);
+
 // --- Invoices ---
-router.get('/invoices/search', searchInvoices);
-router.get('/invoices/:id', getInvoiceById);
+router.get('/invoices/search', requirePermission('cashier.invoices.search'), searchInvoices);
+router.get('/invoices/:id', requirePermission('cashier.invoices.detail'), getInvoiceById);
 
 // --- Payments ---
-router.get('/payments', getPayments);
-router.post('/payments', createPayment);
-router.post('/payments/:id/reverse', reversePayment);
+router.get('/payments', requirePermission('cashier.payments.view'), getPayments);
+router.post('/payments', requirePermission('cashier.payments.create'), createPayment);
+router.post('/payments/:id/reverse', requirePermission('cashier.payments.reverse'), reversePayment);
 
 // --- Receipts ---
-router.get('/receipts/:paymentId', getReceipt);
+router.get('/receipts/:paymentId', requirePermission('cashier.receipts.view'), getReceipt);
 
 module.exports = router;

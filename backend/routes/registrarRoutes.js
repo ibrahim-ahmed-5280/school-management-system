@@ -8,10 +8,13 @@ const {
     updateStudent,
     resetStudentPassword,
     createEnrollment,
-    transferStudentBranch
+    transferStudentBranch,
+    getRegistrarStats
 } = require('../controllers/registrarController');
 
 const { protect, authorize, requireScope, tenantGuard, branchGuard } = require('../middleware/auth');
+const { requirePermission } = require('../middleware/permissions');
+const { enforcePlanLimit } = require('../services/planLimitService');
 
 // Global Middleware for Registrar Routes
 // 1. Authenticate (JWT)
@@ -27,12 +30,13 @@ router.use(branchGuard);
 
 // Routes
 router.get('/academic-years/current', getCurrentAcademicYear);
-router.post('/students', createStudentAdmission);
-router.get('/students', getStudents);
-router.get('/students/:id', getStudentById);
-router.put('/students/:id', updateStudent);
-router.put('/students/:id/reset-password', resetStudentPassword);
-router.post('/enrollments', createEnrollment);
-router.post('/transfers/branch', transferStudentBranch);
+router.get('/stats', requirePermission('students.view'), getRegistrarStats);
+router.post('/students', requirePermission('students.create'), enforcePlanLimit('students'), enforcePlanLimit('users'), createStudentAdmission);
+router.get('/students', requirePermission('students.view'), getStudents);
+router.get('/students/:id', requirePermission('students.detail'), getStudentById);
+router.put('/students/:id', requirePermission('students.update'), updateStudent);
+router.put('/students/:id/reset-password', requirePermission('students.password.reset'), resetStudentPassword);
+router.post('/enrollments', requirePermission('enrollments.create'), createEnrollment);
+router.post('/transfers/branch', requirePermission('transfers.branch.create'), transferStudentBranch);
 
 module.exports = router;

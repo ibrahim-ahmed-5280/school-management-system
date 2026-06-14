@@ -16,8 +16,10 @@ import {
   CheckCircle2
 } from 'lucide-react';
 import tenantService from '../../services/tenantService';
+import { useAuth } from '../../context/AuthContext';
 
 const UsersManagement = () => {
+    const { user: currentUser } = useAuth();
     const [users, setUsers] = useState([]);
     const [branches, setBranches] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -35,6 +37,24 @@ const UsersManagement = () => {
     });
     const [studentSearch, setStudentSearch] = useState('');
     const [studentOptions, setStudentOptions] = useState([]);
+    const [searchTerm, setSearchTerm] = useState('');
+    const [activeDropdownUserId, setActiveDropdownUserId] = useState(null);
+    const [editModal, setEditModal] = useState({ open: false, user: null, name: '', email: '', role: '', scope: '', branchId: '' });
+    const [passwordResetModal, setPasswordResetModal] = useState({ open: false, user: null, tempPassword: '' });
+    const [permissionModal, setPermissionModal] = useState({
+        open: false,
+        user: null,
+        catalog: [],
+        allow: [],
+        deny: [],
+        defaults: [],
+        effective: []
+    });
+    const [permissionSubmitting, setPermissionSubmitting] = useState(false);
+
+    const toggleDropdown = (userId) => {
+        setActiveDropdownUserId(activeDropdownUserId === userId ? null : userId);
+    };
 
     const fetchData = useCallback(async () => {
         try {
@@ -70,8 +90,105 @@ const UsersManagement = () => {
         try {
             await tenantService.updateUserStatus(id, !currentStatus);
             fetchData();
-        } catch {
-            alert('Failed to update user status');
+        } catch (error) {
+            alert(error.response?.data?.message || 'Failed to update user status');
+        }
+    };
+
+    const handleEditUserSubmit = async (e) => {
+        e.preventDefault();
+        setSubmitting(true);
+        try {
+            await tenantService.updateUser(editModal.user._id, {
+                name: editModal.name,
+                email: editModal.email,
+                role: editModal.role,
+                scope: editModal.scope,
+                branchId: editModal.branchId
+            });
+            await fetchData();
+            setEditModal({ open: false, user: null, name: '', email: '', role: '', scope: '', branchId: '' });
+        } catch (error) {
+            alert(error.response?.data?.message || 'Failed to update user');
+        } finally {
+            setSubmitting(false);
+        }
+    };
+
+    const handlePasswordReset = async (user) => {
+        if (!window.confirm(`Are you sure you want to reset the password for ${user.name}?`)) return;
+        try {
+            const res = await tenantService.resetUserPassword(user._id);
+            setPasswordResetModal({
+                open: true,
+                user,
+                tempPassword: res.data.temporaryPassword
+            });
+        } catch (error) {
+            alert(error.response?.data?.message || 'Failed to reset password');
+        }
+    };
+
+    const handleCopyToClipboard = (text) => {
+        navigator.clipboard.writeText(text);
+        alert('Password copied to clipboard!');
+    };
+
+    const handleOpenPermissions = async (user) => {
+        try {
+            const res = await tenantService.getUserPermissions(user._id);
+            const { catalog, allow, deny, defaults, effective } = res.data;
+            setPermissionModal({
+                open: true,
+                user,
+                catalog: catalog || [],
+                allow: allow || [],
+                deny: deny || [],
+                defaults: defaults || [],
+                effective: effective || []
+            });
+        } catch (error) {
+            alert(error.response?.data?.message || 'Failed to load user permissions');
+        }
+    };
+
+    const handlePermissionChange = (key, state) => {
+        setPermissionModal((current) => {
+            let nextAllow = [...current.allow];
+            let nextDeny = [...current.deny];
+
+            nextAllow = nextAllow.filter((k) => k !== key);
+            nextDeny = nextDeny.filter((k) => k !== key);
+
+            if (state === 'allow') {
+                nextAllow.push(key);
+            } else if (state === 'deny') {
+                nextDeny.push(key);
+            }
+
+            return {
+                ...current,
+                allow: nextAllow,
+                deny: nextDeny
+            };
+        });
+    };
+
+    const handleSavePermissions = async (e) => {
+        e.preventDefault();
+        setPermissionSubmitting(true);
+        try {
+            await tenantService.updateUserPermissions(permissionModal.user._id, {
+                allow: permissionModal.allow,
+                deny: permissionModal.deny
+            });
+            alert('Permissions updated successfully');
+            setPermissionModal((current) => ({ ...current, open: false }));
+            await fetchData();
+        } catch (error) {
+            alert(error.response?.data?.message || 'Failed to update user permissions');
+        } finally {
+            setPermissionSubmitting(false);
         }
     };
 
@@ -126,8 +243,10 @@ const UsersManagement = () => {
                     <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-[var(--primary)] transition-colors" size={16} />
                     <input 
                       type="text" 
-                      placeholder="Search users by name or email..."
+                      placeholder="Search users by name, email or role..."
                       className="w-full h-10 bg-slate-50 border border-slate-200 rounded-lg pl-10 pr-4 font-semibold text-slate-900 focus:bg-white focus:ring-2 focus:ring-[var(--primary)]/10 transition-all outline-none text-sm"
+                      value={searchTerm}
+                      onChange={(e) => setSearchTerm(e.target.value)}
                     />
                 </div>
                 <div className="relative">
@@ -176,14 +295,28 @@ const UsersManagement = () => {
                                         <Loader2 className="animate-spin text-[var(--primary)] mx-auto w-8 h-8" />
                                     </td>
                                 </tr>
-                            ) : users.length === 0 ? (
+                            ) : users.filter(user => {
+                                const term = searchTerm.toLowerCase();
+                                return (
+                                    user.name.toLowerCase().includes(term) ||
+                                    user.email.toLowerCase().includes(term) ||
+                                    user.role.toLowerCase().includes(term)
+                                );
+                            }).length === 0 ? (
                                 <tr>
                                     <td colSpan="5" className="px-4 py-10 text-center font-semibold text-slate-400 text-sm">
                                         No institution users found matching criteria.
                                     </td>
                                 </tr>
                             ) : (
-                                users.map((user) => (
+                                users.filter(user => {
+                                    const term = searchTerm.toLowerCase();
+                                    return (
+                                        user.name.toLowerCase().includes(term) ||
+                                        user.email.toLowerCase().includes(term) ||
+                                        user.role.toLowerCase().includes(term)
+                                    );
+                                }).map((user) => (
                                     <tr key={user._id} className="hover:bg-slate-50/50 transition-colors group">
                                         <td className="px-4 py-3">
                                             <div className="flex items-center gap-3">
@@ -219,7 +352,7 @@ const UsersManagement = () => {
                                                 {user.isActive ? 'OPERATIONAL' : 'SUSPENDED'}
                                             </span>
                                         </td>
-                                        <td className="px-4 py-3 text-right text-slate-300">
+                                        <td className="px-4 py-3 text-right text-slate-350 relative">
                                             <div className="flex items-center justify-end gap-1.5">
                                                 <button 
                                                     onClick={() => toggleStatus(user._id, user.isActive)}
@@ -227,9 +360,55 @@ const UsersManagement = () => {
                                                 >
                                                     {user.isActive ? 'Suspend' : 'Reinstate'}
                                                 </button>
-                                                <button className="p-1 hover:bg-slate-100 rounded-lg transition-colors text-slate-400">
-                                                    <MoreVertical size={16} />
-                                                </button>
+                                                <div className="relative">
+                                                    <button 
+                                                        onClick={() => toggleDropdown(user._id)}
+                                                        className="p-1 hover:bg-slate-100 rounded-lg transition-colors text-slate-400"
+                                                    >
+                                                        <MoreVertical size={16} />
+                                                    </button>
+                                                    {activeDropdownUserId === user._id && (
+                                                        <div className="absolute right-0 mt-1 w-40 bg-white border border-slate-200 rounded-lg shadow-lg py-1 z-50 text-left animate-in fade-in slide-in-from-top-1 duration-150">
+                                                            <button
+                                                                onClick={() => {
+                                                                    setActiveDropdownUserId(null);
+                                                                    setEditModal({
+                                                                        open: true,
+                                                                        user,
+                                                                        name: user.name,
+                                                                        email: user.email,
+                                                                        role: user.role,
+                                                                        scope: user.scope,
+                                                                        branchId: user.branchId || ''
+                                                                    });
+                                                                }}
+                                                                className="w-full px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition-colors block text-left"
+                                                            >
+                                                                Edit Details
+                                                            </button>
+                                                            <button
+                                                                onClick={() => {
+                                                                    setActiveDropdownUserId(null);
+                                                                    handleOpenPermissions(user);
+                                                                }}
+                                                                className="w-full px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-55 transition-colors block text-left"
+                                                            >
+                                                                Manage Permissions
+                                                            </button>
+                                                            {user._id !== currentUser?._id && (
+                                                                <button
+                                                                    onClick={() => {
+                                                                        setActiveDropdownUserId(null);
+                                                                        handlePasswordReset(user);
+                                                                    }}
+                                                                    className="w-full px-4 py-2 text-xs font-semibold text-slate-750 hover:bg-slate-50 transition-colors block text-left"
+                                                                >
+                                                                    Reset Password
+                                                                </button>
+                                                            )}
+                                                        </div>
+                                                    )}
+                                                </div>
                                             </div>
                                         </td>
                                     </tr>
@@ -381,6 +560,251 @@ const UsersManagement = () => {
                                 className="h-10 px-6 bg-[var(--primary)] text-white rounded-lg font-black tracking-widest text-[10px] uppercase flex items-center gap-2 shadow hover:bg-[var(--primary-dark)] transition-all active:scale-95 disabled:opacity-30 disabled:pointer-events-none"
                              >
                                 {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : 'PROVISION IDENTITY'}
+                             </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Password Reset Modal */}
+            {passwordResetModal.open && (
+                <div className="fixed inset-0 z-[120] flex items-center justify-center p-4 animate-in fade-in duration-300">
+                    <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-md" onClick={() => setPasswordResetModal({ open: false, user: null, tempPassword: '' })} />
+                    <div className="bg-white w-full max-w-md rounded-2xl shadow-2xl relative z-10 overflow-hidden flex flex-col animate-in zoom-in-95 duration-200 p-6">
+                        <div className="flex items-center gap-3 text-emerald-600 mb-4">
+                            <ShieldCheck size={28} />
+                            <h3 className="text-lg font-black text-slate-900 tracking-tight">Password Reset Complete</h3>
+                        </div>
+                        <p className="text-sm font-semibold text-slate-600 mb-4">
+                            A new temporary security key has been generated for <strong className="text-slate-800">{passwordResetModal.user?.name}</strong>.
+                        </p>
+                        <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 flex items-center justify-between mb-6">
+                            <span className="font-mono text-base font-bold text-slate-800 select-all tracking-wider">
+                                {passwordResetModal.tempPassword}
+                            </span>
+                            <button
+                                onClick={() => handleCopyToClipboard(passwordResetModal.tempPassword)}
+                                className="px-3.5 py-1.5 bg-[var(--primary)] hover:bg-[var(--primary-dark)] text-white text-[10px] font-black tracking-widest uppercase rounded-lg transition-all"
+                            >
+                                Copy
+                            </button>
+                        </div>
+                        <p className="text-xs text-slate-400 font-semibold mb-6">
+                            * The user will be prompted to change this password upon their next sign-in.
+                        </p>
+                        <div className="flex justify-end">
+                            <button
+                                onClick={() => setPasswordResetModal({ open: false, user: null, tempPassword: '' })}
+                                className="h-10 px-6 bg-slate-900 text-white rounded-lg font-black tracking-widest text-[10px] uppercase shadow hover:bg-slate-800 transition-all active:scale-95"
+                            >
+                                Done
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Edit User Modal */}
+            {editModal.open && (
+                <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 animate-in fade-in duration-300">
+                    <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-md" onClick={() => setEditModal({ open: false, user: null, name: '', email: '', role: '', scope: '', branchId: '' })} />
+                    <div className="bg-white w-full max-w-md rounded-2xl shadow-2xl relative z-10 overflow-hidden flex flex-col max-h-full animate-in zoom-in-95 duration-200">
+                        <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
+                            <div>
+                                <h3 className="text-lg font-black text-slate-900 tracking-tight">Edit Personnel Details</h3>
+                                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-0.5">Modify Account Credentials & Assignment</p>
+                            </div>
+                            <button onClick={() => setEditModal({ open: false, user: null, name: '', email: '', role: '', scope: '', branchId: '' })} className="p-2 hover:bg-slate-100 rounded-xl transition-all">
+                                <X size={18} />
+                            </button>
+                        </div>
+                        
+                        <form onSubmit={handleEditUserSubmit} className="flex-1 overflow-y-auto p-6 space-y-4 custom-scrollbar">
+                            <div className="space-y-1.5">
+                                <label className="text-[10px] font-black uppercase tracking-wider text-slate-500 ml-1">Full Legal Name</label>
+                                <input 
+                                    required
+                                    type="text" 
+                                    className="w-full h-10 bg-slate-50 border border-slate-200 rounded-lg px-3 font-semibold text-slate-900 outline-none focus:bg-white focus:ring-2 focus:ring-[var(--primary)]/10 transition-all text-sm"
+                                    value={editModal.name}
+                                    onChange={(e) => setEditModal({...editModal, name: e.target.value})}
+                                />
+                            </div>
+                            <div className="space-y-1.5">
+                                <label className="text-[10px] font-black uppercase tracking-wider text-slate-500 ml-1">Institutional Email</label>
+                                <div className="relative group">
+                                    <Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
+                                    <input 
+                                        required
+                                        type="email" 
+                                        className="w-full h-10 bg-slate-50 border border-slate-200 rounded-lg pl-10 pr-3 font-semibold text-slate-900 outline-none focus:bg-white focus:ring-2 focus:ring-[var(--primary)]/10 transition-all text-sm"
+                                        value={editModal.email}
+                                        onChange={(e) => setEditModal({...editModal, email: e.target.value})}
+                                    />
+                                </div>
+                            </div>
+
+                            <div className="space-y-2">
+                                <label className="text-[10px] font-black uppercase tracking-wider text-slate-500 ml-1">Security Clearance (Role)</label>
+                                <div className="grid grid-cols-2 gap-2">
+                                    {roles.map(r => (
+                                        <button 
+                                            key={r.value}
+                                            type="button"
+                                            onClick={() => {
+                                                setEditModal({...editModal, role: r.value, scope: r.scope, branchId: r.scope === 'tenant' ? '' : editModal.branchId});
+                                            }}
+                                            className={`h-9 px-3 rounded-lg border font-bold text-[9px] tracking-tight uppercase transition-all ${editModal.role === r.value ? 'bg-[var(--primary)] text-white border-[var(--primary)] shadow' : 'bg-white text-slate-600 border-slate-200 hover:border-slate-350'}`}
+                                        >
+                                            {r.label}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+
+                            {editModal.scope === 'branch' && (
+                                <div className="space-y-1.5 animate-in slide-in-from-top-4 duration-300">
+                                    <label className="text-[10px] font-black uppercase tracking-wider text-slate-500 ml-1">Assign to Branch</label>
+                                    <div className="relative">
+                                        <select 
+                                            required
+                                            className="w-full h-10 bg-slate-50 border border-slate-200 rounded-lg px-3 font-semibold text-slate-900 focus:bg-white focus:ring-2 focus:ring-[var(--primary)]/10 transition-all outline-none appearance-none text-sm"
+                                            value={editModal.branchId}
+                                            onChange={(e) => setEditModal({...editModal, branchId: e.target.value})}
+                                        >
+                                            <option value="">Select Target Campus</option>
+                                            {branches.map(b => (
+                                                <option key={b._id} value={b._id}>{b.name}</option>
+                                            ))}
+                                        </select>
+                                        <ChevronDown className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-350 pointer-events-none" size={14} />
+                                    </div>
+                                </div>
+                            )}
+                        </form>
+
+                        <div className="p-4 bg-slate-50/50 border-t border-slate-100 flex justify-end gap-3">
+                             <button 
+                                onClick={() => setEditModal({ open: false, user: null, name: '', email: '', role: '', scope: '', branchId: '' })}
+                                className="px-5 font-black text-[10px] tracking-widest uppercase text-slate-400 hover:text-slate-650 transition-colors"
+                             >
+                                Discard
+                             </button>
+                             <button 
+                                onClick={handleEditUserSubmit}
+                                disabled={submitting || !editModal.role || (editModal.scope === 'branch' && !editModal.branchId)}
+                                className="h-10 px-6 bg-[var(--primary)] text-white rounded-lg font-black tracking-widest text-[10px] uppercase flex items-center gap-2 shadow hover:bg-[var(--primary-dark)] transition-all active:scale-95 disabled:opacity-30 disabled:pointer-events-none"
+                             >
+                                {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : 'SAVE CHANGES'}
+                             </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Permission Settings Modal */}
+            {permissionModal.open && (
+                <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 animate-in fade-in duration-300">
+                    <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-md" onClick={() => setPermissionModal(curr => ({ ...curr, open: false }))} />
+                    <div className="bg-white w-full max-w-2xl rounded-2xl shadow-2xl relative z-10 overflow-hidden flex flex-col max-h-[85vh] animate-in zoom-in-95 duration-200">
+                        <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50/50 bg-slate-50/50">
+                            <div>
+                                <h3 className="text-lg font-black text-slate-900 tracking-tight">Manage User Permissions</h3>
+                                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-0.5">
+                                    Override access privileges for {permissionModal.user?.name} ({permissionModal.user?.role.replace('_', ' ')})
+                                </p>
+                            </div>
+                            <button onClick={() => setPermissionModal(curr => ({ ...curr, open: false }))} className="p-2 hover:bg-slate-100 rounded-xl transition-all">
+                                <X size={18} />
+                            </button>
+                        </div>
+                        
+                        <form onSubmit={handleSavePermissions} className="flex-1 overflow-y-auto p-6 space-y-4 custom-scrollbar">
+                            <div className="space-y-3">
+                                {permissionModal.catalog.length === 0 ? (
+                                    <p className="text-sm font-semibold text-slate-400 text-center py-6">
+                                        No customizable permissions available for this user role.
+                                    </p>
+                                ) : (
+                                    permissionModal.catalog.map((perm) => {
+                                        const isDefault = !permissionModal.allow.includes(perm.key) && !permissionModal.deny.includes(perm.key);
+                                        const isAllowed = permissionModal.allow.includes(perm.key);
+                                        const isDenied = permissionModal.deny.includes(perm.key);
+                                        const defaultsToAllow = permissionModal.defaults.includes(perm.key);
+
+                                        return (
+                                            <div key={perm.key} className="p-4 bg-slate-55 rounded-xl border border-slate-200 hover:border-slate-350 transition-all">
+                                                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                                                    <div className="flex-1 min-w-0">
+                                                        <div className="flex items-center gap-2 flex-wrap">
+                                                            <p className="text-xs font-black text-slate-900 uppercase tracking-wider">{perm.label}</p>
+                                                            <span className="px-1.5 py-0.5 bg-slate-200 text-slate-600 rounded text-[8px] font-bold font-mono">
+                                                                {perm.key}
+                                                            </span>
+                                                        </div>
+                                                        <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider mt-0.5">{perm.group} Group</p>
+                                                        <p className="text-[11px] text-slate-500 font-medium mt-1.5 leading-relaxed">{perm.description}</p>
+                                                    </div>
+                                                    <div className="flex items-center gap-2 shrink-0">
+                                                        {/* Default */}
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => handlePermissionChange(perm.key, 'default')}
+                                                            className={`h-8 px-3.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all border ${
+                                                                isDefault 
+                                                                    ? 'bg-slate-900 text-white border-slate-900 shadow-sm' 
+                                                                    : 'bg-white text-slate-600 border-slate-200 hover:border-slate-350 hover:bg-slate-50'
+                                                            }`}
+                                                        >
+                                                            Default ({defaultsToAllow ? 'Allow' : 'Deny'})
+                                                        </button>
+                                                        {/* Allow */}
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => handlePermissionChange(perm.key, 'allow')}
+                                                            className={`h-8 px-3.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all border ${
+                                                                isAllowed 
+                                                                    ? 'bg-emerald-600 text-white border-emerald-600 shadow-sm' 
+                                                                    : 'bg-white text-emerald-600 border-slate-200 hover:border-emerald-300 hover:bg-emerald-50/30'
+                                                            }`}
+                                                        >
+                                                            Allow
+                                                        </button>
+                                                        {/* Deny */}
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => handlePermissionChange(perm.key, 'deny')}
+                                                            className={`h-8 px-3.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all border ${
+                                                                isDenied 
+                                                                    ? 'bg-rose-600 text-white border-rose-650 shadow-sm' 
+                                                                    : 'bg-white text-rose-650 border-slate-200 hover:border-rose-300 hover:bg-rose-50/30'
+                                                            }`}
+                                                        >
+                                                            Deny
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        );
+                                    })
+                                )}
+                            </div>
+                        </form>
+
+                        <div className="p-4 bg-slate-50/50 border-t border-slate-100 flex justify-end gap-3 shrink-0">
+                             <button 
+                                type="button"
+                                onClick={() => setPermissionModal(curr => ({ ...curr, open: false }))}
+                                className="px-5 font-black text-[10px] tracking-widest uppercase text-slate-400 hover:text-slate-650 transition-colors"
+                             >
+                                Discard
+                             </button>
+                             <button 
+                                onClick={handleSavePermissions}
+                                disabled={permissionSubmitting}
+                                className="h-10 px-6 bg-[var(--primary)] text-white rounded-lg font-black tracking-widest text-[10px] uppercase flex items-center gap-2 shadow hover:bg-[var(--primary-dark)] transition-all active:scale-95 disabled:opacity-30 disabled:pointer-events-none"
+                             >
+                                {permissionSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : 'SAVE PERMISSIONS'}
                              </button>
                         </div>
                     </div>

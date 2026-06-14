@@ -31,10 +31,13 @@ const Plan = require('../models/Plan');
 const AuditLog = require('../models/AuditLog');
 const PlatformSetting = require('../models/PlatformSetting');
 const { logActivity } = require('../utils/logger');
+const { getEffectivePermissions } = require('../utils/permissions');
 const asyncHandler = require('express-async-handler');
 const jwt = require('jsonwebtoken');
 const nodemailer = require('nodemailer');
 const monitoringService = require('../services/monitoringService');
+const { applyTenantStatus, resolveTenantStatus } = require('../services/tenantStatusService');
+const { limitsFromPlan } = require('../services/planLimitService');
 
 const generateToken = (id) => {
     return jwt.sign({ id }, process.env.JWT_SECRET, { expiresIn: '30d' });
@@ -45,6 +48,23 @@ const ONE_GB = 1024 * ONE_MB;
 const STORAGE_CACHE_TTL_MS = 60 * 1000;
 
 const tenantStorageCache = new Map();
+const SMTP_PASSWORD_MASK = '********';
+
+const sanitizeSettings = (settings) => {
+    const data = settings?.toObject ? settings.toObject() : { ...(settings || {}) };
+    data.smtpPass = data.smtpPass ? SMTP_PASSWORD_MASK : '';
+    return data;
+};
+
+const publicSettingsPayload = (settings = {}) => ({
+    platformName: settings.platformName || 'MadrasaHub',
+    logoUrl: settings.logoUrl || '',
+    supportEmail: settings.supportEmail || '',
+    contactPhone: settings.contactPhone || '',
+    defaultCurrency: settings.defaultCurrency || 'USD',
+    defaultPlan: settings.defaultPlan || 'basic',
+    isRegistrationEnabled: settings.isRegistrationEnabled !== false
+});
 
 const TENANT_STORAGE_MODELS = [
     User,
@@ -240,7 +260,29 @@ const inferActivityType = (action = '') => {
     return 'info';
 };
 
-const getTenantStatusLabel = (isActive = false) => (isActive ? 'Active' : 'Suspended');
+const getTenantStatusLabel = (tenant = {}) => {
+    const status = resolveTenantStatus(
+        tenant && typeof tenant === 'object'
+            ? tenant
+            : { isActive: Boolean(tenant), isApproved: true }
+    );
+    return status.charAt(0).toUpperCase() + status.slice(1);
+};
+
+const ensureMainBranchForTenant = async (tenant, adminEmail = '') => {
+    const existingBranch = await Branch.findOne({ tenantId: tenant._id }).sort({ createdAt: 1 });
+    if (existingBranch) return existingBranch;
+
+    return Branch.create({
+        tenantId: tenant._id,
+        name: 'Main Branch',
+        code: 'MAIN',
+        address: '',
+        phone: '',
+        email: adminEmail || '',
+        isActive: true
+    });
+};
 
 const buildPlatformHealthPayload = async () => {
     const dbConnected = mongoose.connection.readyState === 1;
@@ -324,7 +366,7 @@ const registerTenant = asyncHandler(async (req, res) => {
     const password = req.body.password || req.body.adminPassword || req.body.ownerPassword;
 
     // 0. Fetch Plan from DB to get limits
-    const plan = await Plan.findOne({ slug: planSlug });
+    const plan = await Plan.findOne({ slug: planSlug, isActive: true });
     if (!plan) {
         res.status(400);
         throw new Error('Selected subscription plan is invalid');
@@ -354,23 +396,19 @@ const registerTenant = asyncHandler(async (req, res) => {
         primaryColor: req.body.primaryColor || '#3b82f6',
         secondaryColor: req.body.secondaryColor || '#1e40af',
         logoUrl: req.file ? `/uploads/logos/${req.file.filename}` : (req.body.logoUrl || ''),
+        status: 'active',
+        isActive: true,
         isApproved: true,
-        subscriptionLimits: {
-            maxBranches: plan.maxBranches === 'Unlimited' ? 999 : (parseInt(plan.maxBranches) || 1),
-            maxUsers: plan.maxUsers === 'Unlimited' ? 9999 : (parseInt(plan.maxUsers) || 50),
-            maxStudents: plan.maxStudents === 'Unlimited' ? 99999 : (parseInt(plan.maxStudents) || 200)
-        }
+        subscriptionLimits: limitsFromPlan(plan),
+        statusHistory: [{
+            status: 'active',
+            reason: req.body.approvalReason || 'Created by Platform Admin',
+            changedBy: req.user?._id
+        }]
     });
 
     // 3. Create Default Branch
-    const branch = await Branch.create({
-        tenantId: tenant._id,
-        name: 'Main Branch',
-        code: 'MAIN-001',
-        address: 'Default Address',
-        phone: '000-000-0000', 
-        email: adminEmail
-    });
+    const branch = await ensureMainBranchForTenant(tenant, adminEmail);
 
     // 4. Create Initial Tenant Super Admin
     const user = await User.create({
@@ -379,7 +417,8 @@ const registerTenant = asyncHandler(async (req, res) => {
         name: adminName,
         email: adminEmail,
         passwordHash: password,
-        role: 'super_admin'
+        role: 'super_admin',
+        permissionProfile: 'default_super_admin'
     });
 
     // 5. Log activity
@@ -387,17 +426,22 @@ const registerTenant = asyncHandler(async (req, res) => {
         action: 'TENANT_CREATED',
         entityType: 'Tenant',
         entityId: tenant._id.toString(),
-        tenantId: tenant._id,
+        scope: 'platform',
         userId: req.user ? req.user._id : user._id,
         role: req.user ? req.user.role : user.role,
         after: {
             name: tenant.name,
             domain: tenant.domain,
             plan: tenant.plan,
-            isActive: tenant.isActive
+            status: tenant.status
         },
+        reason: req.body.approvalReason,
         req
     });
+
+    // Send welcome/approval email notification asynchronously
+    const { sendPlatformEmail } = require('../utils/emailHelper');
+    sendPlatformEmail('approved', tenant, user).catch(err => console.error(`[SMTP Email Helper] Welcome email failed: ${err.message}`));
 
     res.status(201).json({
         message: 'Tenant registered successfully',
@@ -464,7 +508,7 @@ const getTenants = asyncHandler(async (req, res) => {
         return {
             ...tenant,
             id: tenant._id,
-            status: getTenantStatusLabel(tenant.isActive),
+            status: getTenantStatusLabel(tenant),
             plan: tenantPlan?.name || tenant.plan || 'basic',
             planSlug: tenant.plan,
             branchCount: branchCountByTenant.get(tenantIdKey) || 0,
@@ -489,23 +533,32 @@ const platformLogin = asyncHandler(async (req, res) => {
 
     const user = await User.findOne({ email: String(email || '').trim().toLowerCase() });
 
-    if (user && user.isActive && user.role === 'platform_owner' && (await user.comparePassword(password))) {
+    if (
+        user &&
+        user.isActive &&
+        user.role === 'platform_owner' &&
+        user.scope === 'platform' &&
+        (await user.comparePassword(password))
+    ) {
         res.json({
             _id: user._id,
             name: user.name,
             email: user.email,
             role: user.role,
             scope: user.scope,
+            permissions: getEffectivePermissions(user),
             token: generateToken(user._id)
         });
 
         // Log login
-        logActivity({
-            action: 'Platform Login',
+        await logActivity({
+            action: 'PLATFORM_LOGIN',
+            entityType: 'PlatformSession',
+            entityId: user._id.toString(),
+            scope: 'platform',
             user: user.name,
             userId: user._id,
-            target: 'Platform Dashboard',
-            type: 'info',
+            role: user.role,
             req
         });
     } else {
@@ -520,6 +573,8 @@ const getPlatformDashboard = asyncHandler(async (req, res) => {
     const [
         totalTenants,
         activeTenants,
+        pendingTenants,
+        suspendedTenants,
         totalBranches,
         totalStudents,
         totalUsers,
@@ -529,7 +584,9 @@ const getPlatformDashboard = asyncHandler(async (req, res) => {
         health
     ] = await Promise.all([
         Tenant.countDocuments(),
-        Tenant.countDocuments({ isActive: true }),
+        Tenant.countDocuments({ $or: [{ status: 'active' }, { status: { $exists: false }, isActive: true, isApproved: true }] }),
+        Tenant.countDocuments({ $or: [{ status: 'pending' }, { status: { $exists: false }, isApproved: false }] }),
+        Tenant.countDocuments({ $or: [{ status: 'suspended' }, { status: { $exists: false }, isActive: false, isApproved: true }] }),
         Branch.countDocuments(),
         Student.countDocuments(),
         User.countDocuments(),
@@ -537,7 +594,7 @@ const getPlatformDashboard = asyncHandler(async (req, res) => {
             { $group: { _id: null, total: { $sum: '$amount' } } }
         ]),
         Tenant.find({}).sort({ createdAt: -1 }).limit(5).lean(),
-        AuditLog.find({})
+        AuditLog.find({ scope: 'platform' })
             .sort({ createdAt: -1 })
             .limit(8)
             .populate('actorUserId', 'name email role'),
@@ -566,6 +623,8 @@ const getPlatformDashboard = asyncHandler(async (req, res) => {
     res.json({
         totalTenants,
         activeTenants,
+        pendingTenants,
+        suspendedTenants,
         totalBranches,
         totalStudents,
         totalUsers,
@@ -583,14 +642,14 @@ const getPlatformDashboard = asyncHandler(async (req, res) => {
             domain: tenant.domain,
             plan: recentPlanBySlug.get(String(tenant.plan || '').toLowerCase())?.name || tenant.plan || 'basic',
             branchCount: recentBranchCountByTenant.get(String(tenant._id)) || 0,
-            status: getTenantStatusLabel(tenant.isActive),
+            status: getTenantStatusLabel(tenant),
             createdAt: tenant.createdAt,
             createdAgo: formatRelativeTime(tenant.createdAt)
         })),
         recentActivity: recentAudit.map((log) => ({
             id: log._id,
             action: log.action,
-            actor: log.actorUserId?.name || log.actorRole || 'System',
+            actor: log.actorUserId?.name || log.actorName || log.actorRole || 'System',
             target: log.entityId ? `${log.entityType} (${log.entityId})` : (log.entityType || 'Platform'),
             timestamp: log.createdAt,
             time: formatRelativeTime(log.createdAt),
@@ -602,7 +661,8 @@ const getPlatformDashboard = asyncHandler(async (req, res) => {
 // @desc    Get Subscription Plans
 // @route   GET /api/platform/plans
 const getPlatformPlans = asyncHandler(async (req, res) => {
-    let plans = await Plan.find({ isActive: true });
+    const filter = String(req.query.includeInactive || '').toLowerCase() === 'true' ? {} : { isActive: true };
+    let plans = await Plan.find(filter).sort({ isActive: -1, createdAt: -1 });
     
     // Seed initial plans if none exist
     if (plans.length === 0) {
@@ -628,25 +688,38 @@ const getPlatformPlans = asyncHandler(async (req, res) => {
 // @desc    Create a new Subscription Plan
 // @route   POST /api/platform/plans
 const createPlatformPlan = asyncHandler(async (req, res) => {
-    const { name, slug, price, maxBranches, maxStudents, maxUsers, storage, hasPrioritySupport, icon, color, bg } = req.body;
-    
-    const planExists = await Plan.findOne({ slug });
-    if (planExists) {
+    const {
+        name, slug, description, price, billingCycle, maxBranches, maxStudents, maxUsers,
+        storage, storageLimit, features, hasPrioritySupport, icon, color, bg
+    } = req.body;
+    const normalizedSlug = String(slug || '').trim().toLowerCase();
+    if (!name || !normalizedSlug) {
         res.status(400);
+        throw new Error('Plan name and slug are required');
+    }
+    
+    const planExists = await Plan.findOne({ slug: normalizedSlug });
+    if (planExists) {
+        res.status(409);
         throw new Error('Plan with this slug already exists');
     }
 
     const plan = await Plan.create({
-        name, slug, price, maxBranches, maxStudents, maxUsers, storage, hasPrioritySupport, icon, color, bg
+        name, slug: normalizedSlug, description, price, billingCycle, maxBranches, maxStudents, maxUsers,
+        storage: storageLimit || storage, storageLimit: storageLimit || storage,
+        features, hasPrioritySupport, icon, color, bg
     });
 
     // Log Activity
-    logActivity({
-        action: 'Plan Created',
+    await logActivity({
+        action: 'PLAN_CREATED',
+        entityType: 'Plan',
+        entityId: plan._id.toString(),
+        scope: 'platform',
         user: req.user.name,
         userId: req.user._id,
-        target: `${name} (${slug})`,
-        type: 'info',
+        role: req.user.role,
+        after: plan.toObject(),
         req
     });
 
@@ -662,15 +735,29 @@ const updatePlatformPlan = asyncHandler(async (req, res) => {
         throw new Error('Plan not found');
     }
 
-    const updatedPlan = await Plan.findByIdAndUpdate(req.params.id, req.body, { new: true });
+    const before = plan.toObject();
+    const allowedFields = [
+        'name', 'description', 'price', 'billingCycle', 'maxBranches', 'maxStudents',
+        'maxUsers', 'storage', 'storageLimit', 'features', 'hasPrioritySupport',
+        'icon', 'color', 'bg', 'isActive'
+    ];
+    allowedFields.forEach((field) => {
+        if (Object.prototype.hasOwnProperty.call(req.body, field)) plan[field] = req.body[field];
+    });
+    await plan.save();
+    const updatedPlan = plan;
 
     // Log update
-    logActivity({
-        action: 'Plan Updated',
+    await logActivity({
+        action: 'PLAN_UPDATED',
+        entityType: 'Plan',
+        entityId: updatedPlan._id.toString(),
+        scope: 'platform',
         user: req.user.name,
         userId: req.user._id,
-        target: `${updatedPlan.name} (${updatedPlan.slug})`,
-        type: 'update',
+        role: req.user.role,
+        before,
+        after: updatedPlan.toObject(),
         req
     });
 
@@ -686,57 +773,138 @@ const deletePlatformPlan = asyncHandler(async (req, res) => {
         throw new Error('Plan not found');
     }
 
-    // Instead of hard delete, we can soft delete or check if any tenant is using it
-    const tenantsUsingPlan = await Tenant.countDocuments({ plan: plan.slug });
-    if (tenantsUsingPlan > 0) {
-        res.status(400);
-        throw new Error(`Cannot delete plan being used by ${tenantsUsingPlan} tenants`);
-    }
-
-    await plan.deleteOne();
+    const before = plan.toObject();
+    plan.isActive = false;
+    await plan.save();
 
     // Log deletion
-    logActivity({
-        action: 'Plan Deleted',
+    await logActivity({
+        action: 'PLAN_SOFT_DELETED',
+        entityType: 'Plan',
+        entityId: plan._id.toString(),
+        scope: 'platform',
         user: req.user.name,
         userId: req.user._id,
-        target: `${plan.name} (${plan.slug})`,
-        type: 'danger',
+        role: req.user.role,
+        before,
+        after: plan.toObject(),
         req
     });
 
-    res.json({ message: 'Plan removed successfully' });
+    res.json({ message: 'Plan deactivated successfully', plan });
 });
 
 // @desc    Get System Health
 // @route   GET /api/platform/health
 const getPlatformHealth = asyncHandler(async (req, res) => {
     const health = await buildPlatformHealthPayload();
-    res.json(health);
+    const [
+        tenants, totalBranches, totalUsers, totalStudents, activePlans, settings,
+        branchUsage, userUsage, studentUsage
+    ] = await Promise.all([
+        Tenant.find({}).select('name status isActive isApproved subscriptionLimits').lean(),
+        Branch.countDocuments(),
+        User.countDocuments(),
+        Student.countDocuments(),
+        Plan.countDocuments({ isActive: true }),
+        PlatformSetting.findOne().lean(),
+        Branch.aggregate([{ $group: { _id: '$tenantId', count: { $sum: 1 } } }]),
+        User.aggregate([{ $match: { isActive: { $ne: false } } }, { $group: { _id: '$tenantId', count: { $sum: 1 } } }]),
+        Student.aggregate([{ $group: { _id: '$tenantId', count: { $sum: 1 } } }])
+    ]);
+
+    const statusCounts = tenants.reduce((counts, tenant) => {
+        const status = resolveTenantStatus(tenant);
+        counts[status] = (counts[status] || 0) + 1;
+        return counts;
+    }, {});
+    const usageMaps = {
+        maxBranches: new Map(branchUsage.map((item) => [String(item._id), item.count])),
+        maxUsers: new Map(userUsage.map((item) => [String(item._id), item.count])),
+        maxStudents: new Map(studentUsage.map((item) => [String(item._id), item.count]))
+    };
+    const nearLimits = tenants.filter((tenant) => {
+        const limits = tenant.subscriptionLimits || {};
+        return ['maxBranches', 'maxUsers', 'maxStudents'].some((key) => {
+            const limit = Number(limits[key] || 0);
+            const usage = usageMaps[key].get(String(tenant._id)) || 0;
+            return limit > 0 && usage / limit >= 0.8;
+        });
+    }).map((tenant) => tenant.name);
+    const warnings = [];
+    if (statusCounts.pending) warnings.push(`${statusCounts.pending} tenant(s) are waiting for approval.`);
+    if (nearLimits.length) warnings.push(`${nearLimits.length} tenant(s) may be near a subscription limit.`);
+    if (!settings?.smtpHost || !settings?.senderEmail) warnings.push('SMTP is not fully configured.');
+    warnings.push(`Public registration is ${settings?.isRegistrationEnabled === false ? 'disabled' : 'enabled'}.`);
+
+    res.json({
+        ...health,
+        environment: process.env.NODE_ENV || 'development',
+        summary: {
+            tenantCount: tenants.length,
+            activeTenants: statusCounts.active || 0,
+            pendingTenants: statusCounts.pending || 0,
+            suspendedTenants: statusCounts.suspended || 0,
+            rejectedTenants: statusCounts.rejected || 0,
+            totalBranches,
+            totalUsers,
+            totalStudents,
+            activePlans
+        },
+        warnings
+    });
 });
 
 // @desc    Get Audit Logs
 // @route   GET /api/platform/audit-logs
 const getPlatformAuditLogs = asyncHandler(async (req, res) => {
-    const logs = await AuditLog.find({})
+    const page = Math.max(1, Number.parseInt(req.query.page, 10) || 1);
+    const limit = Math.min(100, Math.max(1, Number.parseInt(req.query.limit, 10) || 25));
+    const query = { scope: 'platform' };
+    if (req.query.action) query.action = req.query.action;
+    if (req.query.actor) {
+        query.$or = [
+            { actorName: { $regex: req.query.actor, $options: 'i' } },
+            { actorEmail: { $regex: req.query.actor, $options: 'i' } }
+        ];
+    }
+    if (req.query.entityType) query.entityType = req.query.entityType;
+    if (req.query.entityId) query.entityId = String(req.query.entityId);
+    if (req.query.tenantId) query.tenantId = req.query.tenantId;
+    if (req.query.from || req.query.to) {
+        query.createdAt = {};
+        if (req.query.from) query.createdAt.$gte = new Date(req.query.from);
+        if (req.query.to) query.createdAt.$lte = new Date(req.query.to);
+    }
+
+    const [logs, total] = await Promise.all([
+        AuditLog.find(query)
         .sort({ createdAt: -1 })
-        .limit(100)
-        .populate('actorUserId', 'name email role');
+        .skip((page - 1) * limit)
+        .limit(limit)
+        .populate('actorUserId', 'name email role'),
+        AuditLog.countDocuments(query)
+    ]);
 
     const transformedLogs = logs.map((log) => ({
         id: log._id,
         action: log.action,
-        user: log.actorUserId?.name || log.actorRole || 'System',
+        user: log.actorUserId?.name || log.actorName || log.actorRole || 'System',
+        actor: log.actorUserId?.name || log.actorName || log.actorRole || 'System',
+        actorEmail: log.actorUserId?.email || log.actorEmail || '',
         target: log.entityId ? `${log.entityType} (${log.entityId})` : (log.entityType || 'Unknown'),
         date: new Date(log.createdAt).toLocaleString(),
         timestamp: log.createdAt,
         type: inferActivityType(log.action),
         actorRole: log.actorRole,
         entityType: log.entityType,
-        entityId: log.entityId
+        entityId: log.entityId,
+        reason: log.reason,
+        before: log.before,
+        after: log.after
     }));
 
-    res.json(transformedLogs);
+    res.json({ logs: transformedLogs, pagination: { page, limit, total, pages: Math.ceil(total / limit) } });
 });
 
 // @desc    Get Platform Settings
@@ -746,7 +914,7 @@ const getPlatformSettings = asyncHandler(async (req, res) => {
     if (!settings) {
         settings = await PlatformSetting.create({});
     }
-    res.json(settings);
+    res.json(sanitizeSettings(settings));
 });
 
 // @desc    Get Single Tenant Details
@@ -784,7 +952,7 @@ const getTenantDetails = asyncHandler(async (req, res) => {
     res.json({
         ...tenant.toObject(),
         id: tenant._id,
-        status: getTenantStatusLabel(tenant.isActive),
+        status: getTenantStatusLabel(tenant),
         plan: tenantPlan?.name || tenant.plan,
         planSlug: tenant.plan,
         admin: tenantAdmin
@@ -826,10 +994,29 @@ const getTenantDetails = asyncHandler(async (req, res) => {
 // @route   PUT /api/platform/settings
 const updatePlatformSettings = asyncHandler(async (req, res) => {
     let settings = await PlatformSetting.findOne();
+    const before = settings?.toObject ? settings.toObject() : {};
+    const incoming = { ...req.body };
+    if (!incoming.smtpPass || incoming.smtpPass === SMTP_PASSWORD_MASK) delete incoming.smtpPass;
+    if (typeof incoming.isRegistrationEnabled === 'string') {
+        incoming.isRegistrationEnabled = incoming.isRegistrationEnabled.toLowerCase() === 'true';
+    }
+    if (incoming.defaultPlan) {
+        incoming.defaultPlan = String(incoming.defaultPlan).trim().toLowerCase();
+        const defaultPlanExists = await Plan.exists({ slug: incoming.defaultPlan, isActive: true });
+        if (!defaultPlanExists) {
+            res.status(400);
+            throw new Error('Default plan must be an active subscription plan');
+        }
+    }
+    delete incoming._id;
+    delete incoming.createdAt;
+    delete incoming.updatedAt;
+    delete incoming.__v;
+    delete incoming.updatedBy;
     if (!settings) {
-        settings = new PlatformSetting(req.body);
+        settings = new PlatformSetting(incoming);
     } else {
-        Object.assign(settings, req.body);
+        Object.assign(settings, incoming);
     }
     
     if (req.file) {
@@ -840,16 +1027,20 @@ const updatePlatformSettings = asyncHandler(async (req, res) => {
     await settings.save();
 
     // Log update
-    logActivity({
-        action: 'Platform Settings Updated',
+    await logActivity({
+        action: 'PLATFORM_SETTINGS_UPDATED',
+        entityType: 'PlatformSetting',
+        entityId: settings._id.toString(),
+        scope: 'platform',
         user: req.user.name,
         userId: req.user._id,
-        target: 'Global Config',
-        type: 'update',
+        role: req.user.role,
+        before: { ...before, smtpPass: before.smtpPass ? SMTP_PASSWORD_MASK : '' },
+        after: sanitizeSettings(settings),
         req
     });
 
-    res.json({ message: 'Settings updated successfully', settings });
+    res.json({ message: 'Settings updated successfully', settings: sanitizeSettings(settings) });
 });
 
 // @desc    Update Tenant Status
@@ -862,31 +1053,99 @@ const updateTenantStatus = asyncHandler(async (req, res) => {
     }
     
     const requestedStatus = String(req.body.status || '').toLowerCase();
-    if (!['active', 'suspended'].includes(requestedStatus)) {
+    const reason = String(
+        req.body.reason
+        || req.body.approvalReason
+        || req.body.rejectionReason
+        || req.body.suspensionReason
+        || req.body.reactivationReason
+        || ''
+    ).trim();
+    if (['rejected', 'suspended'].includes(requestedStatus) && !reason) {
         res.status(400);
-        throw new Error('Status must be Active or Suspended');
+        throw new Error(`A ${requestedStatus === 'rejected' ? 'rejection' : 'suspension'} reason is required`);
     }
-    tenant.isActive = requestedStatus === 'active';
+
+    const before = {
+        status: resolveTenantStatus(tenant),
+        isActive: tenant.isActive,
+        isApproved: tenant.isApproved
+    };
+    applyTenantStatus(tenant, requestedStatus, { reason, changedBy: req.user._id });
+
+    let mainBranch = null;
     if (requestedStatus === 'active') {
-        tenant.isApproved = true;
+        const tenantAdmin = await User.findOne({ tenantId: tenant._id, role: 'super_admin' }).select('email').lean();
+        mainBranch = await ensureMainBranchForTenant(tenant, tenantAdmin?.email);
     }
+
     await tenant.save();
     
     // Log Activity
     await logActivity({
-        action: tenant.isActive ? 'TENANT_ACTIVATED' : 'TENANT_SUSPENDED',
+        action: `TENANT_${requestedStatus.toUpperCase()}`,
         entityType: 'Tenant',
         entityId: tenant._id.toString(),
-        tenantId: tenant._id,
+        scope: 'platform',
         userId: req.user._id,
         role: req.user.role,
-        after: { isActive: tenant.isActive, isApproved: tenant.isApproved },
+        before,
+        after: {
+            status: tenant.status,
+            isActive: tenant.isActive,
+            isApproved: tenant.isApproved
+        },
+        reason,
         req
     });
 
-    const statusLabel = getTenantStatusLabel(tenant.isActive);
-    res.json({ message: `Tenant status updated to ${statusLabel}`, status: statusLabel });
+    // Send lifecycle email asynchronously
+    let emailType = null;
+    if (requestedStatus === 'active') {
+        if (before.status === 'pending') emailType = 'approved';
+        else if (before.status === 'suspended') emailType = 'reactivated';
+    } else if (requestedStatus === 'rejected') {
+        emailType = 'rejected';
+    } else if (requestedStatus === 'suspended') {
+        emailType = 'suspended';
+    }
+
+    if (emailType) {
+        const { sendPlatformEmail } = require('../utils/emailHelper');
+        User.findOne({ tenantId: tenant._id, role: 'super_admin' })
+            .then(admin => {
+                sendPlatformEmail(emailType, tenant, admin, { reason });
+            })
+            .catch(err => console.error(`[SMTP Email Helper] Failed to locate tenant admin for lifecycle email: ${err.message}`));
+    }
+
+    const statusLabel = getTenantStatusLabel(tenant);
+    res.json({
+        message: `Tenant status updated to ${statusLabel}`,
+        status: statusLabel,
+        branch: mainBranch || undefined
+    });
 });
+
+const approveTenant = (req, res, next) => {
+    req.body = { ...req.body, status: 'active', reason: req.body.approvalReason || req.body.reason };
+    return updateTenantStatus(req, res, next);
+};
+
+const rejectTenant = (req, res, next) => {
+    req.body = { ...req.body, status: 'rejected', reason: req.body.rejectionReason || req.body.reason };
+    return updateTenantStatus(req, res, next);
+};
+
+const suspendTenant = (req, res, next) => {
+    req.body = { ...req.body, status: 'suspended', reason: req.body.suspensionReason || req.body.reason };
+    return updateTenantStatus(req, res, next);
+};
+
+const reactivateTenant = (req, res, next) => {
+    req.body = { ...req.body, status: 'active', reason: req.body.reactivationReason || req.body.reason };
+    return updateTenantStatus(req, res, next);
+};
 
 // @desc    Update Tenant Plan
 // @route   PUT /api/platform/tenants/:id/plan
@@ -909,7 +1168,14 @@ const updateTenantPlan = asyncHandler(async (req, res) => {
         throw new Error('Selected plan is invalid');
     }
 
+    const before = {
+        plan: tenant.plan,
+        subscriptionLimits: tenant.subscriptionLimits?.toObject
+            ? tenant.subscriptionLimits.toObject()
+            : tenant.subscriptionLimits
+    };
     tenant.plan = nextPlanSlug;
+    tenant.subscriptionLimits = limitsFromPlan(planExists);
     await tenant.save();
     
     // Log Activity
@@ -917,18 +1183,32 @@ const updateTenantPlan = asyncHandler(async (req, res) => {
         action: 'TENANT_PLAN_CHANGED',
         entityType: 'Tenant',
         entityId: tenant._id.toString(),
-        tenantId: tenant._id,
+        scope: 'platform',
         userId: req.user._id,
         role: req.user.role,
-        after: { plan: tenant.plan },
+        before,
+        after: { plan: tenant.plan, subscriptionLimits: tenant.subscriptionLimits },
+        reason: req.body.reason,
         req
     });
 
-    res.json({ message: `Tenant plan updated to ${tenant.plan}`, plan: tenant.plan });
+    res.json({
+        message: `Tenant plan updated to ${tenant.plan}`,
+        plan: tenant.plan,
+        subscriptionLimits: tenant.subscriptionLimits
+    });
 });
 
 const testPlatformSmtp = asyncHandler(async (req, res) => {
-    const { smtpHost, smtpPort, smtpUser, smtpPass, senderEmail } = req.body;
+    const savedSettings = await PlatformSetting.findOne().lean();
+    const smtpHost = req.body.smtpHost || savedSettings?.smtpHost;
+    const smtpPort = req.body.smtpPort || savedSettings?.smtpPort;
+    const smtpUser = req.body.smtpUser || savedSettings?.smtpUser;
+    const senderEmail = req.body.senderEmail || savedSettings?.senderEmail;
+    const suppliedPassword = req.body.smtpPass;
+    const smtpPass = suppliedPassword && suppliedPassword !== SMTP_PASSWORD_MASK
+        ? suppliedPassword
+        : savedSettings?.smtpPass;
     
     if (!smtpHost || !smtpPort) {
         res.status(400);
@@ -959,26 +1239,74 @@ const testPlatformSmtp = asyncHandler(async (req, res) => {
             html: '<p>This is a test email confirming that your <strong>MadrasaHub</strong> platform SMTP settings have been configured successfully!</p>'
         });
 
+        await logActivity({
+            action: 'SMTP_TEST_SUCCEEDED',
+            entityType: 'PlatformSetting',
+            entityId: savedSettings?._id?.toString(),
+            scope: 'platform',
+            userId: req.user._id,
+            role: req.user.role,
+            after: { smtpHost, smtpPort, smtpUser, senderEmail },
+            req
+        });
+
         res.json({ 
             message: 'SMTP Connection & Test Email Successful',
             details: `Successfully connected to ${smtpHost}:${smtpPort} and dispatched a test email to ${targetEmail}.`
         });
     } catch (err) {
+        await logActivity({
+            action: 'SMTP_TEST_FAILED',
+            entityType: 'PlatformSetting',
+            entityId: savedSettings?._id?.toString(),
+            scope: 'platform',
+            userId: req.user._id,
+            role: req.user.role,
+            after: { smtpHost, smtpPort, smtpUser, senderEmail, error: err.message },
+            req
+        });
         res.status(500);
         throw new Error(`SMTP Connection failed: ${err.message}`);
     }
 });
 
-// @desc    Public platform stats (for landing page)
+// @desc    Public platform stats (v2, database-backed summary)
+// @route   GET /api/public/platform-stats
+// @access  Public
+const getPublicPlatformStats = asyncHandler(async (req, res) => {
+    const [
+        totalSchools,
+        activeSchools,
+        totalStudents,
+        totalBranches,
+        activePlans,
+        settings
+    ] = await Promise.all([
+        Tenant.countDocuments(),
+        Tenant.countDocuments({ $or: [{ status: 'active' }, { status: { $exists: false }, isActive: true, isApproved: true }] }),
+        Student.countDocuments(),
+        Branch.countDocuments(),
+        Plan.countDocuments({ isActive: true }),
+        PlatformSetting.findOne().lean()
+    ]);
+
+    res.json({
+        totalSchools,
+        activeSchools,
+        totalStudents,
+        totalBranches,
+        activePlans,
+        registrationEnabled: settings?.isRegistrationEnabled !== false,
+        platformName: settings?.platformName || 'MadrasaHub'
+    });
+});
+
+// @desc    Public platform stats (legacy wrapper)
 // @route   GET /api/public/stats
 // @access  Public
 const getPublicStats = asyncHandler(async (req, res) => {
-    const [totalTenants, totalStudents, totalBranches] = await Promise.all([
-        Tenant.countDocuments({ isActive: true, isApproved: true }),
-        Student.countDocuments(),
-        Branch.countDocuments()
-    ]);
-    res.json({ totalTenants, totalStudents, totalBranches });
+    // Return the enriched database stats payload to support legacy calls too
+    return getPublicPlatformStats(req, res);
 });
 
 // @desc    Public subscription plans (for landing page pricing)
@@ -996,6 +1324,11 @@ const getPublicPlans = asyncHandler(async (req, res) => {
     res.json(plans);
 });
 
+const getPublicPlatformSettings = asyncHandler(async (req, res) => {
+    const settings = await PlatformSetting.findOne().lean();
+    res.json(publicSettingsPayload(settings || {}));
+});
+
 module.exports = {
     registerTenant,
     getTenants,
@@ -1008,11 +1341,17 @@ module.exports = {
     updatePlatformSettings,
     getTenantDetails,
     updateTenantStatus,
+    approveTenant,
+    rejectTenant,
+    suspendTenant,
+    reactivateTenant,
     updateTenantPlan,
     createPlatformPlan,
     updatePlatformPlan,
     deletePlatformPlan,
     testPlatformSmtp,
     getPublicStats,
-    getPublicPlans
+    getPublicPlans,
+    getPublicPlatformSettings,
+    getPublicPlatformStats
 };

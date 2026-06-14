@@ -14,20 +14,24 @@ import {
     ChevronRight
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import { filterMenuByPermission } from '../utils/permissions';
 
 const NAVY = '#1b2a4a';
 const BLUE = '#4477f5';
 
 const menuItems = [
-    { name: 'Dashboard',   icon: LayoutDashboard, path: '/platform' },
-    { name: 'Tenants',     icon: Users,           path: '/platform/tenants' },
-    { name: 'Plans',       icon: Layers,          path: '/platform/plans' },
-    { name: 'Audit Logs',  icon: History,         path: '/platform/audit' },
-    { name: 'Monitoring',  icon: Activity,        path: '/platform/monitoring' },
-    { name: 'Settings',    icon: Settings,        path: '/platform/settings' },
+    { name: 'Dashboard',   icon: LayoutDashboard, path: '/platform', permission: 'platform.dashboard.view' },
+    { name: 'Tenants',     icon: Users,           path: '/platform/tenants', permission: 'platform.tenants.view' },
+    { name: 'Plans',       icon: Layers,          path: '/platform/plans', permission: 'platform.plans.view' },
+    { name: 'Audit Logs',  icon: History,         path: '/platform/audit', permission: 'platform.audit.view' },
+    { name: 'Monitoring',  icon: Activity,        path: '/platform/monitoring', permission: 'platform.monitoring.view' },
+    { name: 'Settings',    icon: Settings,        path: '/platform/settings', permission: 'platform.settings.view' },
 ];
 
-const PlatformSidebar = ({ locationPath, onClose, user, onLogout }) => (
+const PlatformSidebar = ({ locationPath, onClose, user, onLogout }) => {
+    const visibleMenuItems = filterMenuByPermission(user, menuItems);
+
+    return (
     <div className="flex h-full flex-col" style={{ background: NAVY }}>
         <div className="px-5 py-5 border-b border-white/10">
             <Link to="/platform" className="flex items-center gap-3 group">
@@ -43,7 +47,7 @@ const PlatformSidebar = ({ locationPath, onClose, user, onLogout }) => (
 
         <nav className="flex-1 overflow-y-auto px-3 py-4 space-y-0.5">
             <p className="px-3 pb-2.5 text-[10px] font-extrabold uppercase tracking-[0.15em] text-white/30">Navigation</p>
-            {menuItems.map((item) => {
+            {visibleMenuItems.map((item) => {
                 const isActive = locationPath === item.path ||
                     (item.path !== '/platform' && locationPath.startsWith(item.path));
                 return (
@@ -80,7 +84,8 @@ const PlatformSidebar = ({ locationPath, onClose, user, onLogout }) => (
             </button>
         </div>
     </div>
-);
+    );
+};
 
 const PlatformLayout = ({ children }) => {
     const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -93,7 +98,7 @@ const PlatformLayout = ({ children }) => {
         navigate('/platform/login');
     };
 
-    const currentPage = menuItems.find(item =>
+    const currentPage = filterMenuByPermission(user, menuItems).find(item =>
         location.pathname === item.path ||
         (item.path !== '/platform' && location.pathname.startsWith(item.path))
     );

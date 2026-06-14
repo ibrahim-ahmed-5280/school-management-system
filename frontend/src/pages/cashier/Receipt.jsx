@@ -1,32 +1,62 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { getReceipt } from '../../services/api/cashier.api';
-import { Spinner, Button } from '../../components/ui';
+import { getReceipt, reversePayment } from '../../services/api/cashier.api';
+import { Spinner, Button, Toast } from '../../components/ui';
 import { Printer, ArrowLeft } from 'lucide-react';
+import { useAuth } from '../../context/AuthContext';
+import { hasPermission } from '../../utils/permissions';
 
 const Receipt = () => {
+    const { user } = useAuth();
     const { paymentId } = useParams();
     const [data, setData] = useState(null);
     const [loading, setLoading] = useState(true);
     const navigate = useNavigate();
     const printRef = useRef();
 
-    useEffect(() => {
-        const load = async () => {
-            try {
-                const res = await getReceipt(paymentId);
-                setData(res.data);
-            } catch (err) {
-                console.error(err);
-            } finally {
-                setLoading(false);
-            }
-        };
-        load();
+    // Reversal States
+    const [showReversalModal, setShowReversalModal] = useState(false);
+    const [reversalReason, setReversalReason] = useState('');
+    const [submittingReversal, setSubmittingReversal] = useState(false);
+    const [toast, setToast] = useState(null);
+
+    const loadReceipt = useCallback(async () => {
+        setLoading(true);
+        try {
+            const res = await getReceipt(paymentId);
+            setData(res.data);
+        } catch (err) {
+            console.error(err);
+        } finally {
+            setLoading(false);
+        }
     }, [paymentId]);
+
+    useEffect(() => {
+        loadReceipt();
+    }, [loadReceipt]);
 
     const handlePrint = () => {
         window.print();
+    };
+
+    const confirmReversal = async () => {
+        if (!data || !data.payment) return;
+        setSubmittingReversal(true);
+        setToast(null);
+
+        try {
+            await reversePayment(paymentId, reversalReason);
+            setToast({ type: 'success', message: 'Payment reversed successfully.' });
+            setShowReversalModal(false);
+            setReversalReason('');
+            loadReceipt();
+        } catch (err) {
+            const msg = err.response?.data?.message || err.message || 'Reversal failed.';
+            setToast({ type: 'error', message: msg });
+        } finally {
+            setSubmittingReversal(false);
+        }
     };
 
     if (loading) return <Spinner />;
@@ -36,12 +66,19 @@ const Receipt = () => {
 
     return (
         <div className="max-w-3xl mx-auto space-y-6 print:m-0 print:w-full">
+            {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}
+
             {/* Action Bar (Hidden when printing) */}
             <div className="flex justify-between items-center print:hidden">
                 <Button variant="ghost" onClick={() => navigate(`/cashier/invoices/${invoice.invoiceId}`)}>
                     <ArrowLeft size={18} className="mr-2" /> Back to Invoice
                 </Button>
                 <div className="flex gap-2">
+                    {hasPermission(user, 'cashier.payments.reverse') && payment.status !== 'REVERSED' && payment.amount > 0 && (
+                        <Button onClick={() => setShowReversalModal(true)} variant="danger">
+                            Reverse Payment
+                        </Button>
+                    )}
                     <Button onClick={() => navigate('/cashier/payments/new')}>New Payment</Button>
                     <Button onClick={handlePrint} variant="outline">
                         <Printer size={18} className="mr-2" /> Print Receipt
@@ -77,12 +114,18 @@ const Receipt = () => {
                 </div>
 
                 {/* Payment Detail */}
-                <div className="mb-6 border border-slate-200 rounded p-4 bg-slate-50">
+                <div className={`mb-6 border rounded p-4 ${payment.status === 'REVERSED' ? 'bg-red-50 border-red-200' : 'bg-slate-50 border-slate-200'}`}>
                     <div className="flex justify-between items-center">
-                        <span className="font-bold text-lg">AMOUNT PAID</span>
-                        <span className="font-bold text-xl">${Number(payment.amount).toFixed(2)}</span>
+                        <span className="font-bold text-lg">
+                            {payment.status === 'REVERSED' ? 'AMOUNT REVERSED' : 'AMOUNT PAID'}
+                        </span>
+                        <span className={`font-bold text-xl ${payment.status === 'REVERSED' ? 'text-rose-600' : 'text-slate-900'}`}>
+                            ${Number(payment.amount).toFixed(2)}
+                        </span>
                     </div>
-                    <div className="text-right text-xs text-slate-500 mt-1 uppercase">Method: {payment.method}</div>
+                    <div className="text-right text-xs text-slate-500 mt-1 uppercase">
+                        Method: {payment.method} {payment.status === 'REVERSED' && ' (REVERSED)'}
+                    </div>
                 </div>
 
                 {/* Account Status */}
@@ -103,9 +146,48 @@ const Receipt = () => {
                 {/* Footer */}
                 <div className="text-center text-xs text-slate-400 mt-8 pt-4 border-t border-dashed">
                     <p>{branch.receiptFooter || 'Thank you for your payment.'}</p>
-                    <p className="mt-1 font-mono text-[10px]">Recorded By: {payment.recordedBy}</p>
+                    <p className="mt-1 font-mono text-[10px]">
+                        Recorded By: {payment.recordedBy} 
+                        {payment.reversalReason && ` • Reversed Reason: ${payment.reversalReason}`}
+                    </p>
                 </div>
             </div>
+
+            {/* Reversal Confirmation Modal */}
+            {showReversalModal && (
+                <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center z-50">
+                    <div className="bg-white p-6 rounded-xl border shadow-xl max-w-md w-full space-y-4 m-4">
+                        <h3 className="font-bold text-lg text-slate-900">Confirm Reversal</h3>
+                        <p className="text-sm text-slate-500">
+                            Please provide a reason for reversing this payment of <strong>${Number(payment?.amount || 0).toFixed(2)}</strong>.
+                        </p>
+                        <textarea
+                            className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-rose-500 focus:border-rose-500 outline-none text-sm"
+                            rows="3"
+                            placeholder="Reason for reversal (required)..."
+                            value={reversalReason}
+                            onChange={e => setReversalReason(e.target.value)}
+                            required
+                        />
+                        <div className="flex gap-3 justify-end text-sm">
+                            <Button 
+                                variant="ghost" 
+                                onClick={() => { setShowReversalModal(false); setReversalReason(''); }}
+                                disabled={submittingReversal}
+                            >
+                                Cancel
+                            </Button>
+                            <Button 
+                                variant="danger" 
+                                disabled={!reversalReason.trim() || submittingReversal} 
+                                onClick={confirmReversal}
+                            >
+                                {submittingReversal ? <Spinner size="sm" color="white" /> : 'Confirm Reversal'}
+                            </Button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 };

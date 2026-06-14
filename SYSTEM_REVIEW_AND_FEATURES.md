@@ -2,6 +2,8 @@
 
 This document explains what the school management system does, how the system works, which features are available, what has been improved, and what still needs future work.
 
+For a detailed description of every user role, its responsibilities, access boundaries, and a complete start-to-finish operating scenario, see `SYSTEM_USERS_AND_END_TO_END_SCENARIO.md`.
+
 ## 1. System Summary
 
 The system is a multi-tenant school management platform. One platform can host many schools. Each school is a tenant. Each tenant can have branches, users, students, classes, academic years, finance records, attendance, exams, results, and reports.
@@ -36,7 +38,8 @@ Main responsibilities:
 - Promote students between academic years
 - Transfer students between branches
 - View tenant reports
-- View tenant audit logs
+
+The tenant super admin creates the finance director account from `School Admin > Users`, but cannot open finance routes or use the finance dashboard.
 
 ### Branch admin
 
@@ -86,6 +89,8 @@ Main responsibilities:
 ### Finance director
 
 The finance director manages school-level finance setup and oversight.
+
+The finance director is a separate tenant-scoped account with a dedicated login and dashboard. It cannot use the school super-admin dashboard.
 
 Main responsibilities:
 
@@ -303,6 +308,8 @@ Tenant admins can:
 - View branch list
 - Search/filter branch data
 
+When a public school registration is approved by the platform owner, the system creates a Main Branch if the school does not already have a branch. Tenant admins can edit that Main Branch from the branch management screen.
+
 ### User management
 
 Tenant admins can create and manage:
@@ -363,18 +370,7 @@ Tenant reports summarize:
 
 Historical academic-year reports include promoted students.
 
-### Tenant audit logs
-
-Tenant audit logs track important tenant-level actions.
-
-Examples:
-
-- Branch creation
-- Branding update
-- User creation
-- Academic year changes
-- Promotions
-- Transfers
+Tenant actions are still written to the audit log for accountability, but the audit log screen is platform-owner only. School admins do not have a tenant audit-log module in the UI or API.
 
 ## 8. Branch Admin Features
 
@@ -748,7 +744,7 @@ Examples:
 - Payments
 - Platform settings changes
 
-Audit logs are important for school administrators and platform owners.
+Audit logs are available to platform owners. Tenant-level actions are still recorded, but school admins do not view the audit-log module.
 
 ## 18. Promotion Data Safety
 
@@ -794,7 +790,7 @@ Recommended demo modules:
 - Payment recording
 - Student portal
 - Parent portal
-- Audit logs
+- Platform audit logs
 - Promotion flow
 
 ## 20. What Still Needs Improvement
@@ -881,4 +877,3 @@ Working multi-tenant school management MVP, ready for structured customer demos 
 ```
 
 It should not yet be described as fully production-ready SaaS until deployment, backups, integrations, and expanded testing are completed.
-

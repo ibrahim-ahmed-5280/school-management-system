@@ -1,20 +1,62 @@
-import React, { useState, useEffect } from 'react';
-import { useSearchParams, useNavigate, useParams } from 'react-router-dom';
-import { Card, Button, Input, Select, Spinner, Toast, Badge } from '../../components/ui';
-import { 
-    getExams, 
-    batchEnterResults, 
-    getTeacherAssignments,
-    getExamStudents
+import React, { useEffect, useMemo, useState } from 'react';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { Card, Button, Select, Spinner, Toast, Badge } from '../../components/ui';
+import {
+    batchEnterResults,
+    getExamStudents,
+    getExams,
+    getTeacherAssignments
 } from '../../services/api/teacher.api';
-import { Save, UserCheck, BookOpen, ArrowLeft, Trophy, Target, ClipboardList, Search, AlertCircle, CheckCircle2 } from 'lucide-react';
+import {
+    AlertCircle,
+    ArrowLeft,
+    BookOpen,
+    CheckCircle2,
+    ClipboardList,
+    Save,
+    Search,
+    Users
+} from 'lucide-react';
+
+const asArray = (payload) => {
+    if (Array.isArray(payload)) return payload;
+    if (Array.isArray(payload?.data)) return payload.data;
+    return [];
+};
+
+const getId = (value) => value?._id || value || '';
+
+const uniqueById = (items) => {
+    const map = new Map();
+    items.forEach((item) => {
+        const id = getId(item);
+        if (id && !map.has(id)) map.set(id, item);
+    });
+    return Array.from(map.values());
+};
+
+const studentName = (student) => {
+    const first = student.firstName || '';
+    const last = student.lastName || '';
+    return `${first} ${last}`.trim() || student.name || 'Unnamed Student';
+};
+
+const studentInitials = (student) => {
+    const name = studentName(student);
+    return name
+        .split(' ')
+        .filter(Boolean)
+        .slice(0, 2)
+        .map((part) => part[0])
+        .join('')
+        .toUpperCase();
+};
 
 const ResultsEntry = () => {
     const [searchParams] = useSearchParams();
     const { examId: routeExamId } = useParams();
     const navigate = useNavigate();
-    
-    // Combine route param and search param (route param takes precedence)
+
     const examIdParam = routeExamId || searchParams.get('examId');
     const classIdParam = searchParams.get('classId');
 
@@ -22,20 +64,16 @@ const ResultsEntry = () => {
     const [assignments, setAssignments] = useState([]);
     const [students, setStudents] = useState([]);
     const [existingResults, setExistingResults] = useState([]);
-    const [activeExam, setActiveExam] = useState(null); // Authority context
+    const [activeExam, setActiveExam] = useState(null);
     const [loading, setLoading] = useState(true);
     const [submitting, setSubmitting] = useState(false);
     const [toast, setToast] = useState({ message: '', type: 'success' });
     const [entryDisabledReason, setEntryDisabledReason] = useState('');
-
-    // Selections
     const [selection, setSelection] = useState({
         classId: classIdParam || '',
         subjectId: '',
         examId: examIdParam || ''
     });
-
-    // Student Scores State: { studentId: { marksObtained, isAbsent, remarks } }
     const [scores, setScores] = useState({});
 
     useEffect(() => {
@@ -45,10 +83,10 @@ const ResultsEntry = () => {
                     getExams(),
                     getTeacherAssignments()
                 ]);
-                setExams(examsRes.data || []);
-                setAssignments(assignmentsRes.data || []);
+                setExams(asArray(examsRes));
+                setAssignments(asArray(assignmentsRes));
             } catch {
-                setToast({ message: 'Failed to fetch initial data', type: 'error' });
+                setToast({ message: 'Failed to fetch teacher assignments and exams', type: 'error' });
             } finally {
                 if (!examIdParam) setLoading(false);
             }
@@ -56,81 +94,105 @@ const ResultsEntry = () => {
         fetchData();
     }, [examIdParam]);
 
-    // Update selection if route param changes
     useEffect(() => {
         if (routeExamId) {
-            setSelection(prev => routeExamId === prev.examId ? prev : ({ ...prev, examId: routeExamId }));
+            setSelection((prev) => routeExamId === prev.examId ? prev : { ...prev, examId: routeExamId });
         }
     }, [routeExamId]);
 
-    // Effect to fetch students and existing results when selection changes
     useEffect(() => {
         const fetchContext = async () => {
             if (!selection.examId) {
                 setStudents([]);
+                setExistingResults([]);
                 setScores({});
                 setActiveExam(null);
+                setEntryDisabledReason('');
                 setLoading(false);
                 return;
             }
 
             try {
                 setLoading(true);
-                // Use the centralized api service which includes auth headers
-                const res = await getExamStudents(selection.examId);
-                const { exam, students, existingResults } = res.data;
+                const response = await getExamStudents(selection.examId);
+                const context = response?.data || response || {};
+                const exam = context.exam || null;
+                const studentRows = context.students || [];
+                const resultRows = context.existingResults || [];
 
-                setStudents(students || []);
-                setExistingResults(existingResults || []);
-                setActiveExam(exam || null);
+                setStudents(studentRows);
+                setExistingResults(resultRows);
+                setActiveExam(exam);
 
-                const existingMap = new Map((existingResults || []).map(r => [
-                    (r.studentId?._id || r.studentId).toString(),
-                    r
+                const existingMap = new Map(resultRows.map((result) => [
+                    String(getId(result.studentId)),
+                    result
                 ]));
 
-                // Initialize scores
                 const initialScores = {};
-                (students || []).forEach(student => {
-                    const existing = existingMap.get(student._id.toString());
+                studentRows.forEach((student) => {
+                    const existing = existingMap.get(String(student._id));
                     initialScores[student._id] = {
                         marksObtained: existing ? existing.marksObtained : 0,
-                        isAbsent: existing ? existing.isAbsent : false,
-                        remarks: existing ? existing.remarks : ''
+                        isAbsent: existing ? !!existing.isAbsent : false,
+                        remarks: existing ? existing.remarks || '' : ''
                     };
                 });
                 setScores(initialScores);
 
-                const status = exam?.status || 'DRAFT';
+                const status = String(exam?.status || 'DRAFT').toUpperCase();
                 if (status !== 'OPEN') {
-                    setEntryDisabledReason('Closed');
+                    setEntryDisabledReason('This exam is closed');
                 } else if (exam?.canEnter === false) {
-                    setEntryDisabledReason('Not assigned');
+                    setEntryDisabledReason('You are not assigned to this exam');
                 } else {
                     setEntryDisabledReason('');
                 }
-                
-                // If we also have class/subject info from the exam, update selection state for consistency
+
                 if (exam) {
-                    setSelection(prev => ({
+                    setSelection((prev) => ({
                         ...prev,
-                        classId: exam.classId?._id || exam.classId || prev.classId,
-                        subjectId: exam.subjectId?._id || exam.subjectId || prev.subjectId
+                        classId: getId(exam.classId) || prev.classId,
+                        subjectId: getId(exam.subjectId) || prev.subjectId
                     }));
                 }
-
             } catch (err) {
-                console.error('[SYNC ERROR]', err);
-                setToast({ message: err.response?.data?.message || 'Failed to synchronize assessment context', type: 'error' });
+                console.error('[RESULT ENTRY ERROR]', err);
+                setToast({ message: err.response?.data?.message || 'Failed to load exam students', type: 'error' });
             } finally {
                 setLoading(false);
             }
         };
+
         fetchContext();
     }, [selection.examId]);
 
+    const classOptions = useMemo(() => {
+        const classes = uniqueById(assignments.map((assignment) => assignment.classId).filter(Boolean));
+        return classes.map((item) => ({ label: item.name || 'Unnamed Class', value: item._id }));
+    }, [assignments]);
+
+    const subjectOptions = useMemo(() => {
+        const filtered = assignments.filter((assignment) => {
+            if (!selection.classId) return false;
+            return String(getId(assignment.classId)) === String(selection.classId);
+        });
+        const subjects = uniqueById(filtered.map((assignment) => assignment.subjectId).filter(Boolean));
+        return subjects.map((item) => ({ label: item.name || 'Unnamed Subject', value: item._id }));
+    }, [assignments, selection.classId]);
+
+    const availableExams = useMemo(() => exams.filter((exam) => {
+        const matchesClass = selection.classId
+            ? String(getId(exam.classId)) === String(selection.classId)
+            : true;
+        const matchesSubject = selection.subjectId
+            ? String(getId(exam.subjectId)) === String(selection.subjectId)
+            : true;
+        return matchesClass && matchesSubject;
+    }), [exams, selection.classId, selection.subjectId]);
+
     const handleScoreChange = (studentId, field, value) => {
-        setScores(prev => ({
+        setScores((prev) => ({
             ...prev,
             [studentId]: {
                 ...prev[studentId],
@@ -143,25 +205,26 @@ const ResultsEntry = () => {
         e.preventDefault();
         if (!selection.examId || !activeExam) return;
         if (entryDisabledReason) {
-            return setToast({ message: `Entry disabled: ${entryDisabledReason}`, type: 'error' });
+            setToast({ message: `Entry disabled: ${entryDisabledReason}`, type: 'error' });
+            return;
         }
 
         const maxScore = activeExam.maxScore || 100;
-
-        // Validation
         const payload = [];
+
         for (const studentId in scores) {
-            const s = scores[studentId];
-            if (!s.isAbsent && (s.marksObtained < 0 || s.marksObtained > maxScore)) {
-                return setToast({ message: `Score for one student is invalid (Max: ${maxScore})`, type: 'error' });
+            const score = scores[studentId];
+            if (!score.isAbsent && (score.marksObtained < 0 || score.marksObtained > maxScore)) {
+                setToast({ message: `One score is invalid. Maximum allowed score is ${maxScore}.`, type: 'error' });
+                return;
             }
-            payload.push({ studentId, ...s });
+            payload.push({ studentId, ...score });
         }
 
         setSubmitting(true);
         try {
             await batchEnterResults(selection.examId, payload);
-            setToast({ message: 'All results updated successfully', type: 'success' });
+            setToast({ message: 'Results saved successfully', type: 'success' });
             setTimeout(() => navigate('/teacher/exams'), 1500);
         } catch (err) {
             setToast({ message: err.response?.data?.message || 'Failed to save results', type: 'error' });
@@ -170,252 +233,245 @@ const ResultsEntry = () => {
         }
     };
 
-    // Filtered options
-    const availableExams = exams.filter(e => {
-        const matchesClass = selection.classId ? (e.classId?._id || e.classId) === selection.classId : true;
-        const matchesSubject = selection.subjectId ? (e.subjectId?._id || e.subjectId) === selection.subjectId : true;
-        return matchesClass && matchesSubject;
-    });
+    const maxScore = activeExam?.maxScore || 100;
+    const recordedCount = existingResults.length;
 
-    if (loading) return (
-        <div className="min-h-[60vh] flex flex-col items-center justify-center space-y-4">
-            <Spinner size="lg" />
-            <p className="text-slate-400 font-black animate-pulse uppercase tracking-widest text-xs">Initializing Entry Terminal...</p>
-        </div>
-    );
+    if (loading) {
+        return (
+            <div className="flex min-h-[60vh] flex-col items-center justify-center gap-3">
+                <Spinner size="lg" />
+                <p className="text-xs font-black uppercase tracking-widest text-slate-400">Loading result entry...</p>
+            </div>
+        );
+    }
 
     return (
-        <div className="max-w-7xl mx-auto space-y-10 animate-fade-in pb-32">
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-8">
-                <div className="flex items-center gap-6">
-                    <button onClick={() => navigate(-1)} className="h-16 w-16 flex items-center justify-center bg-white hover:bg-slate-50 border border-slate-100 rounded-2xl shadow-sm text-slate-400 hover:text-blue-600 transition-all active:scale-95">
-                        <ArrowLeft size={28} strokeWidth={3} />
+        <div className="space-y-6 pb-10">
+            <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+                <div className="flex items-center gap-4">
+                    <button
+                        onClick={() => navigate(-1)}
+                        className="flex h-11 w-11 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-500 shadow-sm transition hover:text-[var(--primary)]"
+                    >
+                        <ArrowLeft size={20} />
                     </button>
                     <div>
-                        <h1 className="text-5xl font-black text-slate-900 tracking-tight leading-none">Scoresheet Portal</h1>
-                        <p className="text-slate-500 font-medium mt-2">Precision bulk entry for authorized academic assessments.</p>
+                        <h1 className="text-2xl font-black tracking-tight text-slate-900">Enter Results</h1>
+                        <p className="mt-1 text-sm font-medium text-slate-500">Select an open exam and record student scores.</p>
                     </div>
                 </div>
 
-                <div className="flex items-center gap-4 bg-white p-3 rounded-2xl border border-slate-100 shadow-sm">
-                    <div className="text-right px-4 border-r border-slate-100">
-                        <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Total Capacity</p>
-                        <p className="font-black text-slate-900">{students.length} Students</p>
+                <div className="grid grid-cols-2 gap-3 sm:flex">
+                    <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
+                        <p className="text-[10px] font-black uppercase tracking-wider text-slate-400">Students</p>
+                        <p className="font-black text-slate-900">{students.length}</p>
                     </div>
-                    <div className="px-4">
-                        <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Recorded</p>
-                        <p className="font-black text-blue-600">{existingResults.length} Enrolled</p>
+                    <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
+                        <p className="text-[10px] font-black uppercase tracking-wider text-slate-400">Recorded</p>
+                        <p className="font-black text-[var(--primary)]">{recordedCount}</p>
                     </div>
                 </div>
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-4 gap-8 items-start">
-                <Card className="lg:col-span-1 p-8 border-none shadow-2xl bg-[#0F172A] text-white rounded-[2.5rem] sticky top-8">
-                    <h3 className="text-xl font-black tracking-tight mb-10 flex items-center gap-3">
-                        <div className="h-10 w-10 bg-blue-600 rounded-xl flex items-center justify-center">
-                            <Search size={22} />
-                        </div>
-                        Context Filter
-                    </h3>
+            <Card className="shadow-sm">
+                <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+                    <Select
+                        label="Class"
+                        options={classOptions}
+                        value={selection.classId}
+                        onChange={(e) => setSelection((prev) => ({ ...prev, classId: e.target.value, subjectId: '', examId: '' }))}
+                        placeholder="Select class"
+                    />
+                    <Select
+                        label="Subject"
+                        options={subjectOptions}
+                        value={selection.subjectId}
+                        onChange={(e) => setSelection((prev) => ({ ...prev, subjectId: e.target.value, examId: '' }))}
+                        placeholder="Select subject"
+                        disabled={!selection.classId}
+                    />
+                    <Select
+                        label="Exam"
+                        options={availableExams.map((exam) => ({
+                            label: `${exam.name || exam.examCategoryId?.name || 'Unnamed Exam'} (${exam.termId?.name || 'No term'})`,
+                            value: exam._id
+                        }))}
+                        value={selection.examId}
+                        onChange={(e) => setSelection((prev) => ({ ...prev, examId: e.target.value }))}
+                        placeholder="Select exam"
+                        disabled={!selection.subjectId}
+                    />
+                </div>
+            </Card>
 
-                    <div className="space-y-8">
-                        <Select 
-                            label="Target Class"
-                            options={Array.from(new Set(assignments.map(a => a.classId?._id))).map(id => {
-                                const cls = assignments.find(a => a.classId?._id === id)?.classId;
-                                return { label: cls?.name, value: id };
-                            })}
-                            value={selection.classId}
-                            onChange={e => setSelection({...selection, classId: e.target.value, examId: ''})}
-                            className="bg-slate-800 border-slate-700 text-white font-bold h-14 rounded-xl"
-                        />
-
-                        <Select 
-                            label="Knowledge Area"
-                            options={assignments.filter(a => a.classId?._id === selection.classId).map(a => ({
-                                label: a.subjectId?.name,
-                                value: a.subjectId?._id
-                            }))}
-                            value={selection.subjectId}
-                            onChange={e => setSelection({...selection, subjectId: e.target.value, examId: ''})}
-                            className="bg-slate-800 border-slate-700 text-white font-bold h-14 rounded-xl"
-                            disabled={!selection.classId}
-                        />
-
-                        <Select 
-                            label="Target Assessment"
-                            options={availableExams.map(e => ({
-                                label: `${e.name || e.examCategoryId?.name || 'Unnamed'} (${e.termId?.name || 'No Term'})`,
-                                value: e._id
-                            }))}
-                            value={selection.examId}
-                            onChange={e => setSelection({...selection, examId: e.target.value})}
-                            className="bg-slate-800 border-slate-700 text-white font-bold h-14 rounded-xl"
-                            disabled={!selection.subjectId}
-                        />
-
-                        {activeExam && (
-                            <div className="pt-8 border-t border-slate-800 space-y-4">
-                                <div className="flex justify-between items-center p-4 bg-slate-800/50 rounded-2xl">
-                                    <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">Max Score</span>
-                                    <Badge variant="blue" className="px-3 py-1 bg-blue-500/10 border-0 text-blue-400 font-black">{activeExam.maxScore || 100} Pts</Badge>
-                                </div>
-                                <div className="flex justify-between items-center p-4 bg-slate-800/50 rounded-2xl">
-                                    <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">Status</span>
-                                    <Badge variant={activeExam.status === 'OPEN' ? 'success' : 'warning'} className="px-3 py-1 font-black uppercase text-[9px]">{activeExam.status}</Badge>
-                                </div>
-                            </div>
-                        )}
+            {!selection.examId ? (
+                <Card className="shadow-sm">
+                    <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-12 text-center">
+                        <Search size={40} className="mb-4 text-slate-300" />
+                        <h2 className="text-lg font-black text-slate-800">Choose an exam to begin</h2>
+                        <p className="mt-1 max-w-md text-sm font-medium text-slate-500">
+                            Pick the class, subject, and exam above. Only open exams allow score entry.
+                        </p>
                     </div>
                 </Card>
-
-                <div className="lg:col-span-3 space-y-8">
-                    {!selection.examId ? (
-                        <Card className="p-20 text-center border-none shadow-xl rounded-[3rem] bg-white border-2 border-dashed border-slate-100 flex flex-col items-center">
-                            <div className="h-24 w-24 bg-slate-50 rounded-full flex items-center justify-center text-slate-200 mb-8">
-                                <Search size={48} />
+            ) : !activeExam ? (
+                <Card className="shadow-sm">
+                    <div className="flex flex-col items-center justify-center p-12">
+                        <Spinner size="lg" />
+                        <p className="text-sm font-semibold text-slate-400">Loading exam context...</p>
+                    </div>
+                </Card>
+            ) : (
+                <form onSubmit={handleBatchSubmit} className="space-y-6">
+                    <Card className="shadow-sm">
+                        <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
+                            <div className="md:col-span-2">
+                                <p className="text-[11px] font-black uppercase tracking-wider text-slate-400">Exam</p>
+                                <h2 className="mt-1 text-xl font-black text-slate-900">
+                                    {activeExam.name || activeExam.examCategoryId?.name || 'Unnamed Exam'}
+                                </h2>
+                                <p className="mt-1 text-sm font-semibold text-slate-500">
+                                    {activeExam.classId?.name || 'Class'} - {activeExam.subjectId?.name || 'Subject'}
+                                </p>
                             </div>
-                            <h2 className="text-3xl font-black text-slate-400 tracking-tight uppercase">Select Session Context</h2>
-                            <p className="text-slate-400 mt-2 font-medium">Use the left panel to filter the specific class, subject, and exam you wish to grade.</p>
-                        </Card>
-                    ) : !activeExam ? (
-                         <Card className="p-20 text-center border-none shadow-xl rounded-[3rem] bg-white border-2 border-dashed border-slate-100 flex flex-col items-center animate-pulse">
-                            <div className="h-24 w-24 bg-slate-50 rounded-full flex items-center justify-center text-slate-200 mb-8">
-                                <Spinner size="lg" />
+                            <div className="rounded-xl border border-slate-100 bg-slate-50 px-4 py-3">
+                                <p className="text-[10px] font-black uppercase tracking-wider text-slate-400">Max Score</p>
+                                <p className="mt-1 font-black text-slate-900">{maxScore}</p>
                             </div>
-                            <h2 className="text-3xl font-black text-slate-400 tracking-tight uppercase">Loading Context...</h2>
-                        </Card>
-                    ) : (
-                        <form onSubmit={handleBatchSubmit} className="space-y-8">
-                            {entryDisabledReason && (
-                                <Card className="p-6 border-2 border-amber-100 bg-amber-50/40 rounded-2xl">
-                                    <div className="flex items-center gap-3 text-amber-700 font-semibold">
-                                        <AlertCircle size={18} />
-                                        Entry disabled: {entryDisabledReason}
-                                    </div>
-                                </Card>
-                            )}
-                            <Card className="p-0 border-none shadow-2xl rounded-[3rem] bg-white overflow-hidden">
-                                <div className="p-10 bg-slate-50/80 border-b border-slate-100 flex justify-between items-center">
-                                    <div>
-                                        <h2 className="text-3xl font-black text-slate-800 tracking-tight">Active Students</h2>
-                                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mt-1">Authorized for {activeExam.classId?.name}</p>
-                                    </div>
-                                    <div className="flex gap-2">
-                                        <Badge variant="blue" className="px-6 py-2 rounded-xl border-none font-black text-xs uppercase">{activeExam.subjectId?.name}</Badge>
-                                    </div>
-                                </div>
+                            <div className="rounded-xl border border-slate-100 bg-slate-50 px-4 py-3">
+                                <p className="text-[10px] font-black uppercase tracking-wider text-slate-400">Status</p>
+                                <Badge variant={String(activeExam.status).toUpperCase() === 'OPEN' ? 'success' : 'warning'} className="mt-1 rounded-lg">
+                                    {activeExam.status || 'DRAFT'}
+                                </Badge>
+                            </div>
+                        </div>
+                    </Card>
 
-                                <div className="overflow-x-auto">
-                                    <table className="w-full">
-                                        <thead className="bg-white">
-                                            <tr>
-                                                <th className="px-10 py-6 text-left text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">Learner Identity</th>
-                                                <th className="px-10 py-6 text-center text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">Clinical Status</th>
-                                                <th className="px-10 py-6 text-center text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">Score ({activeExam.maxScore || 100})</th>
-                                                <th className="px-10 py-6 text-left text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">Clinical Remarks</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody className="divide-y divide-slate-50">
-                                            {students.map(student => {
-                                                const scoreData = scores[student._id] || { marksObtained: 0, isAbsent: false, remarks: '' };
-                                                const hasResult = existingResults.some(r => (r.studentId?._id || r.studentId).toString() === student._id.toString());
+                    {entryDisabledReason && (
+                        <div className="flex items-start gap-3 rounded-2xl border border-amber-200 bg-amber-50 px-5 py-4 text-amber-800">
+                            <AlertCircle size={20} className="mt-0.5 shrink-0" />
+                            <div>
+                                <p className="font-black">Result entry is disabled</p>
+                                <p className="text-sm font-medium">{entryDisabledReason}</p>
+                            </div>
+                        </div>
+                    )}
 
-                                                return (
-                                                    <tr key={student._id} className={`group hover:bg-blue-50/30 transition-all ${scoreData.isAbsent ? 'bg-red-50/30' : ''}`}>
-                                                        <td className="px-10 py-8">
-                                                            <div className="flex items-center gap-4">
-                                                                <div className="h-12 w-12 rounded-2xl bg-slate-100 flex items-center justify-center font-black text-slate-400 text-lg uppercase group-hover:bg-blue-100 group-hover:text-blue-600 transition-all">
-                                                                    {student.firstName?.[0]}{student.lastName?.[0]}
-                                                                </div>
-                                                                <div>
-                                                                    <p className="font-black text-slate-800 tracking-tight text-lg">{student.firstName} {student.lastName}</p>
-                                                                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">#{student.admissionNumber}</p>
-                                                                </div>
-                                                                {hasResult && <CheckCircle2 className="text-emerald-500" size={18} />}
+                    <Card className="p-0 shadow-sm">
+                        <div className="flex flex-col gap-3 border-b border-slate-200 bg-slate-50 px-5 py-4 md:flex-row md:items-center md:justify-between">
+                            <div>
+                                <h3 className="text-lg font-black text-slate-900">Student Marksheet</h3>
+                                <p className="text-sm font-medium text-slate-500">Mark absent students and enter scores for present students.</p>
+                            </div>
+                            <Badge variant="outline" className="rounded-lg">
+                                <Users size={13} />
+                                {students.length} students
+                            </Badge>
+                        </div>
+
+                        {students.length === 0 ? (
+                            <div className="p-10 text-center">
+                                <ClipboardList size={38} className="mx-auto mb-3 text-slate-300" />
+                                <p className="font-bold text-slate-700">No students found for this exam</p>
+                                <p className="mt-1 text-sm text-slate-500">Check the exam class/enrollment setup.</p>
+                            </div>
+                        ) : (
+                            <div className="overflow-x-auto">
+                                <table className="min-w-[900px] w-full text-left text-sm">
+                                    <thead className="bg-white text-[11px] font-black uppercase tracking-wider text-slate-400">
+                                        <tr>
+                                            <th className="px-5 py-4">Student</th>
+                                            <th className="px-5 py-4 text-center">Attendance</th>
+                                            <th className="px-5 py-4 text-center">Score</th>
+                                            <th className="px-5 py-4">Remarks</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-slate-100">
+                                        {students.map((student) => {
+                                            const scoreData = scores[student._id] || { marksObtained: 0, isAbsent: false, remarks: '' };
+                                            const hasResult = existingResults.some((result) => String(getId(result.studentId)) === String(student._id));
+
+                                            return (
+                                                <tr key={student._id} className={scoreData.isAbsent ? 'bg-rose-50/40' : 'hover:bg-slate-50/70'}>
+                                                    <td className="px-5 py-4">
+                                                        <div className="flex items-center gap-3">
+                                                            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-100 text-sm font-black text-slate-500">
+                                                                {studentInitials(student)}
                                                             </div>
-                                                        </td>
-                                                        <td className="px-10 py-8">
-                                                            <div className="flex justify-center">
-                                                                <label className="flex flex-col items-center gap-2 cursor-pointer group/toggle">
-                                                                    <div className={`h-8 w-14 rounded-full border-2 transition-all flex items-center px-1 ${scoreData.isAbsent ? 'bg-red-500 border-red-400 justify-end' : 'bg-slate-100 border-slate-200 justify-start'}`}>
-                                                                        <div className="h-5 w-5 bg-white rounded-full shadow-md transition-all"></div>
-                                                                    </div>
-                                                                    <input 
-                                                                        type="checkbox" 
-                                                                        className="hidden" 
-                                                                        checked={scoreData.isAbsent}
-                                                                        onChange={e => handleScoreChange(student._id, 'isAbsent', e.target.checked)}
-                                                                        disabled={!!entryDisabledReason}
-                                                                    />
-                                                                    <span className={`text-[9px] font-black uppercase tracking-widest ${scoreData.isAbsent ? 'text-red-500' : 'text-slate-400'}`}>
-                                                                        {scoreData.isAbsent ? 'Absent' : 'Present'}
-                                                                    </span>
-                                                                </label>
-                                                            </div>
-                                                        </td>
-                                                        <td className="px-10 py-8">
-                                                            <div className="flex justify-center">
-                                                                <div className="relative w-32 group/input">
-                                                                    <input 
-                                                                        type="number"
-                                                                        disabled={scoreData.isAbsent || !!entryDisabledReason}
-                                                                        max={activeExam.maxScore || 100}
-                                                                        min="0"
-                                                                        className={`w-full h-14 bg-white border-2 rounded-2xl text-center font-black text-xl transition-all outline-none ${scoreData.isAbsent ? 'border-slate-100 text-slate-200 bg-slate-50' : 'border-slate-100 focus:border-blue-500 text-slate-900 shadow-sm focus:shadow-blue-200/50'}`}
-                                                                        value={scoreData.marksObtained}
-                                                                        onChange={e => handleScoreChange(student._id, 'marksObtained', e.target.value)}
-                                                                    />
-                                                                    {!scoreData.isAbsent && scoreData.marksObtained > (activeExam.maxScore || 100) && (
-                                                                        <div className="absolute -top-2 -right-2 text-red-500 animate-bounce">
-                                                                            <AlertCircle size={24} fill="white" />
-                                                                        </div>
-                                                                    )}
+                                                            <div className="min-w-0">
+                                                                <div className="flex items-center gap-2">
+                                                                    <p className="font-black text-slate-900">{studentName(student)}</p>
+                                                                    {hasResult && <CheckCircle2 size={16} className="text-emerald-500" />}
                                                                 </div>
+                                                                <p className="text-xs font-semibold text-slate-400">#{student.admissionNumber || student.studentCode || student._id}</p>
                                                             </div>
-                                                        </td>
-                                                        <td className="px-10 py-8">
-                                                            <input 
-                                                                placeholder="Academic notes..."
-                                                                className="w-full bg-transparent border-b border-slate-100 focus:border-blue-400 py-2 text-sm font-medium outline-none transition-all placeholder:text-slate-300"
-                                                                value={scoreData.remarks}
-                                                                onChange={e => handleScoreChange(student._id, 'remarks', e.target.value)}
+                                                        </div>
+                                                    </td>
+                                                    <td className="px-5 py-4">
+                                                        <label className="mx-auto flex w-fit cursor-pointer items-center gap-2">
+                                                            <input
+                                                                type="checkbox"
+                                                                className="h-4 w-4 rounded border-slate-300 text-[var(--primary)] focus:ring-[var(--primary)]"
+                                                                checked={scoreData.isAbsent}
+                                                                onChange={(e) => handleScoreChange(student._id, 'isAbsent', e.target.checked)}
                                                                 disabled={!!entryDisabledReason}
                                                             />
-                                                        </td>
-                                                    </tr>
-                                                );
-                                            })}
-                                        </tbody>
-                                    </table>
-                                </div>
+                                                            <span className={`text-xs font-black uppercase tracking-wider ${scoreData.isAbsent ? 'text-rose-600' : 'text-emerald-600'}`}>
+                                                                {scoreData.isAbsent ? 'Absent' : 'Present'}
+                                                            </span>
+                                                        </label>
+                                                    </td>
+                                                    <td className="px-5 py-4">
+                                                        <div className="mx-auto max-w-28">
+                                                            <input
+                                                                type="number"
+                                                                disabled={scoreData.isAbsent || !!entryDisabledReason}
+                                                                max={maxScore}
+                                                                min="0"
+                                                                className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-center font-black text-slate-900 outline-none transition focus:border-[var(--primary)] focus:ring-4 focus:ring-blue-100 disabled:bg-slate-100 disabled:text-slate-400"
+                                                                value={scoreData.marksObtained}
+                                                                onChange={(e) => handleScoreChange(student._id, 'marksObtained', e.target.value)}
+                                                            />
+                                                        </div>
+                                                    </td>
+                                                    <td className="px-5 py-4">
+                                                        <input
+                                                            placeholder="Optional note"
+                                                            className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 outline-none transition focus:border-[var(--primary)] focus:ring-4 focus:ring-blue-100 disabled:bg-slate-100"
+                                                            value={scoreData.remarks}
+                                                            onChange={(e) => handleScoreChange(student._id, 'remarks', e.target.value)}
+                                                            disabled={!!entryDisabledReason}
+                                                        />
+                                                    </td>
+                                                </tr>
+                                            );
+                                        })}
+                                    </tbody>
+                                </table>
+                            </div>
+                        )}
 
-                                <div className="p-10 bg-slate-900 border-t border-slate-800 flex justify-between items-center">
-                                    <div className="flex items-center gap-4">
-                                        <div className="h-12 w-12 bg-white/5 rounded-2xl flex items-center justify-center text-slate-500">
-                                            <AlertCircle size={24} />
-                                        </div>
-                                        <p className="text-slate-400 text-sm font-medium leading-tight">
-                                            Double-check all scores before commitment.<br/>
-                                            <span className="text-xs text-slate-600">Once committed, results align with curriculum standards.</span>
-                                        </p>
-                                    </div>
-                                    <Button 
-                                        onClick={handleBatchSubmit}
-                                        disabled={submitting || !!entryDisabledReason}
-                                        className="h-16 px-16 bg-blue-600 hover:bg-blue-700 shadow-2xl shadow-blue-500/20 text-white font-black uppercase tracking-[0.2em] text-xs rounded-2xl transition-all active:scale-95 flex items-center gap-4"
-                                    >
-                                        {submitting ? <Spinner size="sm" /> : <Save size={20} />}
-                                        Initialize Batch Commit
-                                    </Button>
-                                </div>
-                            </Card>
-                        </form>
-                    )}
-                </div>
-            </div>
+                        <div className="flex flex-col gap-4 border-t border-slate-200 bg-slate-50 px-5 py-4 md:flex-row md:items-center md:justify-between">
+                            <div className="flex items-start gap-3 text-sm text-slate-500">
+                                <AlertCircle size={18} className="mt-0.5 shrink-0 text-slate-400" />
+                                <p className="font-medium">Review scores before saving. Saved scores update existing records for this exam.</p>
+                            </div>
+                            <Button
+                                type="submit"
+                                disabled={submitting || !!entryDisabledReason || students.length === 0}
+                                className="w-full md:w-auto"
+                            >
+                                {submitting ? <Spinner size="sm" /> : <Save size={18} />}
+                                Save Results
+                            </Button>
+                        </div>
+                    </Card>
+                </form>
+            )}
 
-            {toast.message && <Toast message={toast.message} type={toast.type} onClose={() => setToast({message: ''})} />}
+            {toast.message && (
+                <Toast message={toast.message} type={toast.type} onClose={() => setToast({ message: '' })} />
+            )}
         </div>
     );
 };

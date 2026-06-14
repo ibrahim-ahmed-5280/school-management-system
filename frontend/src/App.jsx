@@ -23,6 +23,7 @@ const TenantPromote = lazy(() => import('./pages/tenant/Promote'));
 const TenantTransfer = lazy(() => import('./pages/tenant/Transfer'));
 const TenantAuditLogs = lazy(() => import('./pages/tenant/AuditLogs'));
 const FinanceDashboard = lazy(() => import('./pages/finance/FinanceDashboard'));
+const FinanceLogin = lazy(() => import('./pages/finance/Login'));
 const FinancePolicies = lazy(() => import('./pages/finance/Policies'));
 const FeeStructures = lazy(() => import('./pages/finance/FeeStructures'));
 const Invoices = lazy(() => import('./pages/finance/Invoices'));
@@ -71,6 +72,7 @@ const TeacherExports = lazy(() => import('./pages/teacher/Exports'));
 const TeacherGradingPolicy = lazy(() => import('./pages/teacher/GradingPolicy'));
 const TeacherSchedule = lazy(() => import('./pages/teacher/Schedule'));
 const TeacherAttendanceSession = lazy(() => import('./pages/teacher/AttendanceSession'));
+const TeacherProfile = lazy(() => import('./pages/teacher/Profile'));
 import TeacherLayout from './layouts/TeacherLayout';
 const StudentDashboard = lazy(() => import('./pages/student/Dashboard'));
 const StudentResults = lazy(() => import('./pages/student/Results'));
@@ -85,6 +87,7 @@ const ParentDashboard = lazy(() => import('./pages/parent/ParentDashboard'));
 const ParentStudentGrades = lazy(() => import('./pages/parent/ParentStudentGrades'));
 const ParentStudentAttendance = lazy(() => import('./pages/parent/ParentStudentAttendance'));
 const ParentInvoices = lazy(() => import('./pages/parent/ParentInvoices'));
+const ParentProfile = lazy(() => import('./pages/parent/ParentProfile'));
 const LeavesRequest = lazy(() => import('./pages/hr/LeavesRequest'));
 const StaffLeavesManager = lazy(() => import('./pages/hr/StaffLeavesManager'));
 const PayrollDashboard = lazy(() => import('./pages/hr/PayrollDashboard'));
@@ -96,21 +99,26 @@ import TenantFinanceLayout from './layouts/TenantFinanceLayout';
 import { BrandingProvider } from './context/BrandingContext';
 import { PlatformGuard, PublicGuard, TenantGuard, FinanceGuard } from './utils/authGuard';
 import { ProtectedRoute as RoleScopeGuard } from './utils/guards';
+import PermissionRouteGuard from './components/auth/PermissionRouteGuard';
 
 // Tenant Scoped Layout Wrapper
 const TenantWrapper = () => (
   <BrandingProvider>
-    <TenantLayout>
-      <Outlet />
-    </TenantLayout>
+    <PermissionRouteGuard>
+      <TenantLayout>
+        <Outlet />
+      </TenantLayout>
+    </PermissionRouteGuard>
   </BrandingProvider>
 );
 
 // Platform Scoped Layout Wrapper
 const PlatformWrapper = () => (
-  <PlatformLayout>
-    <Outlet />
-  </PlatformLayout>
+  <PermissionRouteGuard>
+    <PlatformLayout>
+      <Outlet />
+    </PlatformLayout>
+  </PermissionRouteGuard>
 );
 
 const RouteLoader = () => (
@@ -125,137 +133,137 @@ function App() {
       <AuthProvider>
         <Suspense fallback={<RouteLoader />}>
           <Routes>
-          {/* Main App Routes */}
-          <Route path="/" element={<Landing />} />
-          <Route path="/login" element={<Login />} />
-          <Route path="/register" element={<RegisterTenant />} />
-          <Route path="/tenant/register" element={<RegisterTenant />} />
-          <Route 
-            path="/dashboard/*" 
-            element={<Navigate to="/login" replace />} 
-          />
+            {/* Main App Routes */}
+            <Route path="/" element={<Landing />} />
+            <Route path="/login" element={<Login />} />
+            <Route path="/register" element={<RegisterTenant />} />
+            <Route path="/tenant/register" element={<RegisterTenant />} />
+            <Route
+              path="/dashboard/*"
+              element={<Navigate to="/login" replace />}
+            />
 
-          {/* Tenant Super Admin Routes */}
-          <Route path="/tenant">
-            <Route path="login" element={<Navigate to="/login" replace />} />
-            
-            <Route element={<TenantGuard />}>
-              <Route element={<TenantWrapper />}>
-                <Route index element={<TenantDashboard />} />
-                <Route path="branding" element={<TenantBranding />} />
-                <Route path="branches" element={<TenantBranches />} />
-                <Route path="users" element={<TenantUsers />} />
-                <Route path="academic-years" element={<TenantAcademicYears />} />
-                <Route path="reports" element={<TenantReports />} />
-                <Route path="enrollments/promote" element={<TenantPromote />} />
-                <Route path="enrollments/transfer" element={<TenantTransfer />} />
-                <Route path="audit-logs" element={<TenantAuditLogs />} />
+            {/* Tenant Super Admin Routes */}
+            <Route path="/tenant">
+              <Route path="login" element={<Navigate to="/login" replace />} />
+
+              <Route element={<TenantGuard />}>
+                <Route element={<TenantWrapper />}>
+                  <Route index element={<TenantDashboard />} />
+                  <Route path="branding" element={<TenantBranding />} />
+                  <Route path="branches" element={<TenantBranches />} />
+                  <Route path="users" element={<TenantUsers />} />
+                  <Route path="academic-years" element={<TenantAcademicYears />} />
+                  <Route path="reports" element={<TenantReports />} />
+                  <Route path="enrollments/promote" element={<TenantPromote />} />
+                  <Route path="enrollments/transfer" element={<TenantTransfer />} />
+                  <Route path="audit-logs" element={<TenantAuditLogs />} />
+                </Route>
               </Route>
             </Route>
-          </Route>
 
-          {/* Finance Director Routes */}
-          <Route path="/finance">
-            <Route path="login" element={<Navigate to="/login" replace />} />
-            <Route path="register" element={<Navigate to="/login" replace />} />
-            <Route element={<FinanceGuard />}>
-               <Route element={<BrandingProvider><TenantFinanceLayout /></BrandingProvider>}>
-                <Route index element={<FinanceDashboard />} />
-                <Route path="policies" element={<FinancePolicies />} />
-                <Route path="fee-structures" element={<FeeStructures />} />
-                <Route path="invoices" element={<Invoices />} />
-                <Route path="invoices/:invoiceId" element={<InvoiceDetails />} />
-                <Route path="invoices/generate" element={<InvoiceGenerate />} />
-                <Route path="payments" element={<Payments />} />
-                <Route path="reports" element={<Reports />} />
-                <Route path="outstanding" element={<Outstanding />} />
-                <Route path="receipt-branding" element={<ReceiptBranding />} />
+            {/* Finance Director Routes */}
+            <Route path="/finance">
+              <Route path="login" element={<FinanceLogin />} />
+              <Route path="register" element={<Navigate to="/finance/login" replace />} />
+              <Route element={<FinanceGuard />}>
+                <Route element={<BrandingProvider><PermissionRouteGuard><TenantFinanceLayout /></PermissionRouteGuard></BrandingProvider>}>
+                  <Route index element={<FinanceDashboard />} />
+                  <Route path="policies" element={<FinancePolicies />} />
+                  <Route path="fee-structures" element={<FeeStructures />} />
+                  <Route path="invoices" element={<Invoices />} />
+                  <Route path="invoices/:invoiceId" element={<InvoiceDetails />} />
+                  <Route path="invoices/generate" element={<InvoiceGenerate />} />
+                  <Route path="payments" element={<Payments />} />
+                  <Route path="reports" element={<Reports />} />
+                  <Route path="outstanding" element={<Outstanding />} />
+                  <Route path="receipt-branding" element={<ReceiptBranding />} />
+                </Route>
               </Route>
             </Route>
-          </Route>
 
-          {/* Branch Admin Routes */}
-          <Route path="/branch">
-            <Route path="login" element={<Navigate to="/login" replace />} />
-            <Route path="register" element={<Navigate to="/login" replace />} />
+            {/* Branch Admin Routes */}
+            <Route path="/branch">
+              <Route path="login" element={<Navigate to="/login" replace />} />
+              <Route path="register" element={<Navigate to="/login" replace />} />
+              <Route
+                element={(
+                  <RoleScopeGuard role="BRANCH_ADMIN" scope="branch" redirectTo="/login">
+                    <BrandingProvider><PermissionRouteGuard><BranchLayout /></PermissionRouteGuard></BrandingProvider>
+                  </RoleScopeGuard>
+                )}
+              >
+                <Route index element={<BranchDashboard />} />
+                <Route path="profile" element={<BranchProfile />} />
+                <Route path="classes" element={<BranchClasses />} />
+                <Route path="staff" element={<BranchStaff />} />
+                <Route path="students" element={<BranchStudents />} />
+                <Route path="promotions" element={<BranchPromotions />} />
+                <Route path="exams" element={<BranchExams />} />
+                <Route path="results" element={<BranchResults />} />
+                <Route path="results/student" element={<BranchStudentResults />} />
+                <Route path="assignments" element={<BranchTeacherAssignments />} />
+                <Route path="timetable" element={<BranchTimetableBuilder />} />
+                <Route path="timetable/class/:classId" element={<BranchTimetableBuilder />} />
+                <Route path="reports" element={<BranchReports />} />
+
+                {/* HR Modules */}
+                <Route path="hr/leaves" element={<StaffLeavesManager />} />
+                <Route path="hr/payroll" element={<PayrollDashboard />} />
+              </Route>
+            </Route>
+
+            {/* Registrar Routes */}
+            <Route path="/registrar/login" element={<Navigate to="/login" replace />} />
+            <Route path="/registrar/register" element={<Navigate to="/login" replace />} />
             <Route
               element={(
-                <RoleScopeGuard role="BRANCH_ADMIN" scope="branch" redirectTo="/login">
-                  <BrandingProvider><BranchLayout /></BrandingProvider>
+                <RoleScopeGuard role="REGISTRAR" scope="branch" redirectTo="/login">
+                  <BrandingProvider><PermissionRouteGuard><RegistrarLayout /></PermissionRouteGuard></BrandingProvider>
                 </RoleScopeGuard>
               )}
             >
-              <Route index element={<BranchDashboard />} />
-              <Route path="profile" element={<BranchProfile />} />
-              <Route path="classes" element={<BranchClasses />} />
-              <Route path="staff" element={<BranchStaff />} />
-              <Route path="students" element={<BranchStudents />} />
-              <Route path="promotions" element={<BranchPromotions />} />
-              <Route path="exams" element={<BranchExams />} />
-              <Route path="results" element={<BranchResults />} />
-              <Route path="results/student" element={<BranchStudentResults />} />
-              <Route path="assignments" element={<BranchTeacherAssignments />} />
-              <Route path="timetable" element={<BranchTimetableBuilder />} />
-              <Route path="timetable/class/:classId" element={<BranchTimetableBuilder />} />
-              <Route path="reports" element={<BranchReports />} />
-              
-              {/* HR Modules */}
-              <Route path="hr/leaves" element={<StaffLeavesManager />} />
-              <Route path="hr/payroll" element={<PayrollDashboard />} />
+              <Route path="/registrar">
+                <Route index element={<RegistrarDashboard />} />
+                <Route path="admissions" element={<RegistrarAdmissions />} />
+                <Route path="students" element={<RegistrarStudents />} />
+                <Route path="students/:studentId" element={<RegistrarStudentDetails />} />
+                <Route path="enrollments/new" element={<RegistrarNewEnrollment />} />
+                <Route path="transfers" element={<RegistrarTransfers />} />
+              </Route>
             </Route>
-          </Route>
 
-          {/* Registrar Routes */}
-          <Route path="/registrar/login" element={<Navigate to="/login" replace />} />
-          <Route path="/registrar/register" element={<Navigate to="/login" replace />} />
-          <Route
-            element={(
-              <RoleScopeGuard role="REGISTRAR" scope="branch" redirectTo="/login">
-                <BrandingProvider><RegistrarLayout /></BrandingProvider>
-              </RoleScopeGuard>
-            )}
-          >
-            <Route path="/registrar">
-              <Route index element={<RegistrarDashboard />} />
-              <Route path="admissions" element={<RegistrarAdmissions />} />
-              <Route path="students" element={<RegistrarStudents />} />
-              <Route path="students/:studentId" element={<RegistrarStudentDetails />} />
-              <Route path="enrollments/new" element={<RegistrarNewEnrollment />} />
-              <Route path="transfers" element={<RegistrarTransfers />} />
+            {/* Cashier Routes */}
+            <Route path="/cashier/login" element={<Navigate to="/login" replace />} />
+            <Route path="/cashier/register" element={<Navigate to="/login" replace />} />
+            <Route
+              element={(
+                <RoleScopeGuard role="CASHIER" scope="branch" redirectTo="/login">
+                  <BrandingProvider><PermissionRouteGuard><CashierLayout /></PermissionRouteGuard></BrandingProvider>
+                </RoleScopeGuard>
+              )}
+            >
+              <Route path="/cashier">
+                <Route index element={<CashierDashboard />} />
+                <Route path="invoices" element={<CashierInvoices />} />
+                <Route path="invoices/:id" element={<CashierInvoiceDetails />} />
+                <Route path="payments/new" element={<CashierNewPayment />} />
+                <Route path="payments" element={<CashierPayments />} />
+                <Route path="receipts/:paymentId" element={<CashierReceipt />} />
+              </Route>
             </Route>
-          </Route>
 
-          {/* Cashier Routes */}
-          <Route path="/cashier/login" element={<Navigate to="/login" replace />} />
-          <Route path="/cashier/register" element={<Navigate to="/login" replace />} />
-          <Route
-            element={(
-              <RoleScopeGuard role="CASHIER" scope="branch" redirectTo="/login">
-                <BrandingProvider><CashierLayout /></BrandingProvider>
-              </RoleScopeGuard>
-            )}
-          >
-            <Route path="/cashier">
-              <Route index element={<CashierDashboard />} />
-              <Route path="invoices" element={<CashierInvoices />} />
-              <Route path="invoices/:id" element={<CashierInvoiceDetails />} />
-              <Route path="payments/new" element={<CashierNewPayment />} />
-              <Route path="payments" element={<CashierPayments />} />
-              <Route path="receipts/:paymentId" element={<CashierReceipt />} />
-            </Route>
-          </Route>
-
-          {/* Teacher Routes */}
-          <Route path="/teacher/login" element={<Navigate to="/login" replace />} />
-          <Route path="/teacher/register" element={<Navigate to="/login" replace />} />
-          <Route
-            path="/teacher"
-            element={(
-              <RoleScopeGuard role="TEACHER" scope="branch" redirectTo="/login">
-                <BrandingProvider><TeacherLayout /></BrandingProvider>
-              </RoleScopeGuard>
-            )}
-          >
+            {/* Teacher Routes */}
+            <Route path="/teacher/login" element={<Navigate to="/login" replace />} />
+            <Route path="/teacher/register" element={<Navigate to="/login" replace />} />
+            <Route
+              path="/teacher"
+              element={(
+                <RoleScopeGuard role="TEACHER" scope="branch" redirectTo="/login">
+                  <BrandingProvider><PermissionRouteGuard><TeacherLayout /></PermissionRouteGuard></BrandingProvider>
+                </RoleScopeGuard>
+              )}
+            >
               <Route index element={<TeacherDashboard />} />
               <Route path="templates" element={<TeacherTemplates />} />
               <Route path="categories" element={<TeacherCategories />} />
@@ -270,68 +278,72 @@ function App() {
               <Route path="schedule" element={<TeacherSchedule />} />
               <Route path="attendance" element={<TeacherSchedule focusAttendance />} />
               <Route path="attendance/:sessionId" element={<TeacherAttendanceSession />} />
-              
+
               {/* Leaves Requests */}
               <Route path="leaves" element={<LeavesRequest />} />
-          </Route>
 
-          {/* Student Routes */}
-          <Route path="/student/login" element={<Navigate to="/login" replace />} />
-          <Route path="/student/register" element={<Navigate to="/login" replace />} />
-          <Route
-            path="/student"
-            element={(
-              <RoleScopeGuard role="STUDENT" scope="branch" redirectTo="/login">
-                <BrandingProvider><StudentLayout /></BrandingProvider>
-              </RoleScopeGuard>
-            )}
-          >
+              {/* Profile and Settings */}
+              <Route path="profile" element={<TeacherProfile />} />
+            </Route>
+
+            {/* Student Routes */}
+            <Route path="/student/login" element={<Navigate to="/login" replace />} />
+            <Route path="/student/register" element={<Navigate to="/login" replace />} />
+            <Route
+              path="/student"
+              element={(
+                <RoleScopeGuard role="STUDENT" scope="branch" redirectTo="/login">
+                  <BrandingProvider><PermissionRouteGuard><StudentLayout /></PermissionRouteGuard></BrandingProvider>
+                </RoleScopeGuard>
+              )}
+            >
               <Route index element={<StudentDashboard />} />
               <Route path="results" element={<StudentResults />} />
               <Route path="rank" element={<StudentRank />} />
-              <Route path="schedule" element={<StudentSchedule />} />
               <Route path="attendance" element={<StudentAttendance />} />
+              <Route path="schedule" element={<StudentSchedule />} />
               <Route path="profile" element={<StudentProfile />} />
               <Route path="change-password" element={<StudentChangePassword />} />
-          </Route>
+            </Route>
 
-          {/* Parent Routes */}
-          <Route
-            path="/parent"
-            element={(
-              <RoleScopeGuard role="PARENT" scope="tenant" redirectTo="/login">
-                <BrandingProvider><ParentLayout /></BrandingProvider>
-              </RoleScopeGuard>
-            )}
-          >
+            {/* Parent Routes */}
+            <Route
+              path="/parent"
+              element={(
+                <RoleScopeGuard role="PARENT" scope="tenant" redirectTo="/login">
+                  <BrandingProvider><PermissionRouteGuard><ParentLayout /></PermissionRouteGuard></BrandingProvider>
+                </RoleScopeGuard>
+              )}
+            >
               <Route index element={<ParentDashboard />} />
               <Route path="grades" element={<ParentStudentGrades />} />
               <Route path="attendance" element={<ParentStudentAttendance />} />
               <Route path="invoices" element={<ParentInvoices />} />
-          </Route>
-
-          {/* Platform Owner Routes */}
-          <Route path="/platform">
-            {/* Public Platform Routes */}
-            <Route element={<PublicGuard />}>
-              <Route path="login" element={<PlatformLogin />} />
-              <Route path="register" element={<Navigate to="/platform/login" replace />} />
+              <Route path="profile" element={<ParentProfile />} />
             </Route>
 
-            {/* Protected Platform Routes */}
-            <Route element={<PlatformGuard />}>
-              <Route element={<PlatformWrapper />}>
-                <Route index element={<PlatformDashboard />} />
-                <Route path="tenants" element={<PlatformTenants />} />
-                <Route path="tenants/new" element={<PlatformNewTenant />} />
-                <Route path="tenants/:tenantId" element={<PlatformTenantDetails />} />
-                <Route path="plans" element={<PlatformPlans />} />
-                <Route path="audit" element={<PlatformAuditLogs />} />
-                <Route path="monitoring" element={<PlatformMonitoring />} />
-                <Route path="settings" element={<PlatformSettings />} />
+            {/* Platform Owner Routes */}
+            <Route path="/platform">
+              {/* Public Platform Routes */}
+              <Route element={<PublicGuard />}>
+                <Route path="login" element={<PlatformLogin />} />
+                <Route path="register" element={<Navigate to="/platform/login" replace />} />
+              </Route>
+
+              {/* Protected Platform Routes */}
+              <Route element={<PlatformGuard />}>
+                <Route element={<PlatformWrapper />}>
+                  <Route index element={<PlatformDashboard />} />
+                  <Route path="tenants" element={<PlatformTenants />} />
+                  <Route path="tenants/new" element={<PlatformNewTenant />} />
+                  <Route path="tenants/:tenantId" element={<PlatformTenantDetails />} />
+                  <Route path="plans" element={<PlatformPlans />} />
+                  <Route path="audit" element={<PlatformAuditLogs />} />
+                  <Route path="monitoring" element={<PlatformMonitoring />} />
+                  <Route path="settings" element={<PlatformSettings />} />
+                </Route>
               </Route>
             </Route>
-          </Route>
           </Routes>
         </Suspense>
       </AuthProvider>

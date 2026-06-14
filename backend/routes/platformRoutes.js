@@ -12,6 +12,10 @@ const {
     getPlatformSettings,
     updatePlatformSettings,
     updateTenantStatus,
+    approveTenant,
+    rejectTenant,
+    suspendTenant,
+    reactivateTenant,
     updateTenantPlan,
     createPlatformPlan,
     updatePlatformPlan,
@@ -19,8 +23,23 @@ const {
     testPlatformSmtp
 } = require('../controllers/platformController');
 const { protect, authorize } = require('../middleware/auth');
+const { requirePermission } = require('../middleware/permissions');
 const upload = require('../middleware/uploadMiddleware');
 const { authRateLimiter, registrationRateLimiter } = require('../middleware/rateLimiter');
+
+const requireTenantStatusPermission = (req, res, next) => {
+    const requestedStatus = String(req.body.status || '').toLowerCase();
+    const permission = requestedStatus === 'rejected'
+        ? 'platform.tenants.reject'
+        : requestedStatus === 'suspended'
+            ? 'platform.tenants.deactivate'
+            : resolveActivePermission(req);
+    return requirePermission(permission)(req, res, next);
+};
+
+const resolveActivePermission = (req) => String(req.body.action || '').toLowerCase() === 'approve'
+    ? 'platform.tenants.approve'
+    : 'platform.tenants.activate';
 
 // Public platform auth routes
 router.post('/auth/login', authRateLimiter, platformLogin);
@@ -29,20 +48,24 @@ router.post('/auth/login', authRateLimiter, platformLogin);
 router.use(protect);
 router.use(authorize('platform_owner'));
 
-router.get('/dashboard', getPlatformDashboard);
-router.post('/tenants', registrationRateLimiter, upload.single('logo'), registerTenant);
-router.get('/tenants', getTenants);
-router.get('/tenants/:id', getTenantDetails);
-router.patch('/tenants/:id/status', updateTenantStatus);
-router.put('/tenants/:id/plan', updateTenantPlan);
-router.get('/plans', getPlatformPlans);
-router.post('/plans', createPlatformPlan);
-router.put('/plans/:id', updatePlatformPlan);
-router.delete('/plans/:id', deletePlatformPlan);
-router.get('/health', getPlatformHealth);
-router.get('/audit-logs', getPlatformAuditLogs);
-router.get('/settings', getPlatformSettings);
-router.put('/settings', upload.single('logo'), updatePlatformSettings);
-router.post('/settings/test-email', testPlatformSmtp);
+router.get('/dashboard', requirePermission('platform.dashboard.view'), getPlatformDashboard);
+router.post('/tenants', requirePermission('platform.tenants.create'), registrationRateLimiter, upload.single('logo'), registerTenant);
+router.get('/tenants', requirePermission('platform.tenants.view'), getTenants);
+router.get('/tenants/:id', requirePermission('platform.tenants.view'), getTenantDetails);
+router.patch('/tenants/:id/status', requireTenantStatusPermission, updateTenantStatus);
+router.post('/tenants/:id/approve', requirePermission('platform.tenants.approve'), approveTenant);
+router.post('/tenants/:id/reject', requirePermission('platform.tenants.reject'), rejectTenant);
+router.post('/tenants/:id/suspend', requirePermission('platform.tenants.deactivate'), suspendTenant);
+router.post('/tenants/:id/reactivate', requirePermission('platform.tenants.activate'), reactivateTenant);
+router.put('/tenants/:id/plan', requirePermission('platform.tenants.plan.update'), updateTenantPlan);
+router.get('/plans', requirePermission('platform.plans.view'), getPlatformPlans);
+router.post('/plans', requirePermission('platform.plans.create'), createPlatformPlan);
+router.put('/plans/:id', requirePermission('platform.plans.update'), updatePlatformPlan);
+router.delete('/plans/:id', requirePermission('platform.plans.delete'), deletePlatformPlan);
+router.get('/health', requirePermission('platform.monitoring.view'), getPlatformHealth);
+router.get('/audit-logs', requirePermission('platform.audit.view'), getPlatformAuditLogs);
+router.get('/settings', requirePermission('platform.settings.view'), getPlatformSettings);
+router.put('/settings', requirePermission('platform.settings.update'), upload.single('logo'), updatePlatformSettings);
+router.post('/settings/test-email', requirePermission('platform.smtp.test'), testPlatformSmtp);
 
 module.exports = router;

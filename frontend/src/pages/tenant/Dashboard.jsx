@@ -58,9 +58,12 @@ const Dashboard = () => {
         users: 0,
         students: 0,
         revenue: { totalRevenue: 0, projectedRevenue: 0 },
-        currentYear: null
+        branchDistribution: [],
+        currentYear: null,
+        trendData: []
     });
     const [branchesList, setBranchesList] = useState([]);
+    const [activities, setActivities] = useState([]);
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
@@ -79,8 +82,19 @@ const Dashboard = () => {
                     users: usersRes.data.length,
                     students: reportsRes.data.studentCount,
                     revenue: reportsRes.data.revenue,
-                    currentYear: yearsRes.data.find(y => y.isCurrent)
+                    branchDistribution: reportsRes.data.branchDistribution || [],
+                    currentYear: yearsRes.data.find(y => y.isCurrent),
+                    trendData: reportsRes.data.trendData || []
                 });
+
+                // Fetch real audit logs
+                try {
+                    const logsRes = await tenantService.getAuditLogs({ limit: 5 });
+                    setActivities(logsRes.data?.logs || []);
+                } catch (err) {
+                    console.error('Failed to load audit logs:', err);
+                    setActivities([]);
+                }
             } catch (error) {
                 console.error('Failed to load dashboard stats:', error);
             } finally {
@@ -96,25 +110,14 @@ const Dashboard = () => {
         </div>
     );
 
-    const totalCollected = stats.revenue?.totalRevenue || 0;
-    const totalProjected = stats.revenue?.projectedRevenue || 0;
-
-    // Derived Monthly Revenue Trend Data
-    const revenueTrendData = [
-        { month: 'Jan', Collected: Math.round(totalCollected * 0.12), Projected: Math.round(totalProjected * 0.14) },
-        { month: 'Feb', Collected: Math.round(totalCollected * 0.15), Projected: Math.round(totalProjected * 0.16) },
-        { month: 'Mar', Collected: Math.round(totalCollected * 0.18), Projected: Math.round(totalProjected * 0.19) },
-        { month: 'Apr', Collected: Math.round(totalCollected * 0.20), Projected: Math.round(totalProjected * 0.21) },
-        { month: 'May', Collected: Math.round(totalCollected * 0.22), Projected: Math.round(totalProjected * 0.20) },
-        { month: 'Jun', Collected: Math.round(totalCollected * 0.13), Projected: Math.round(totalProjected * 0.10) }
-    ];
+    const hasTrendData = stats.trendData && stats.trendData.some(d => d.Collected > 0 || d.Projected > 0);
 
     // Branch student ratio distribution
-    const branchChartData = branchesList.map((branch, index) => {
-        const share = index === 0 ? 0.45 : index === 1 ? 0.35 : 0.20;
+    const branchChartData = branchesList.map((branch) => {
+        const dist = stats.branchDistribution.find(d => d.branchId === branch._id);
         return {
             name: branch.name.replace(' Branch', '').replace(' Campus', ''),
-            students: Math.round((stats.students || 0) * (share / (branchesList.length === 1 ? 0.45 : branchesList.length === 2 ? 0.8 : 1)))
+            students: dist ? dist.count : 0
         };
     });
 
@@ -152,7 +155,6 @@ const Dashboard = () => {
                     label="Active Branches"
                     value={stats.branches}
                     subValue="Locations Provisioned"
-                    trend="+1 this quarter"
                     iconColor="text-blue-600"
                     iconBg="bg-blue-50"
                 />
@@ -161,7 +163,6 @@ const Dashboard = () => {
                     label="Operational Staff"
                     value={stats.users}
                     subValue="Total Employees"
-                    trend="Stability: 98%"
                     iconColor="text-indigo-600"
                     iconBg="bg-indigo-50"
                 />
@@ -170,7 +171,6 @@ const Dashboard = () => {
                     label="Student Body"
                     value={stats.students}
                     subValue="Across all branches"
-                    trend="+12% growth"
                     iconColor="text-emerald-600"
                     iconBg="bg-emerald-50"
                 />
@@ -201,26 +201,32 @@ const Dashboard = () => {
                         </span>
                     </div>
                     <div className="h-64">
-                        <ResponsiveContainer width="100%" height="100%">
-                            <AreaChart data={revenueTrendData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
-                                <defs>
-                                    <linearGradient id="colorRevenue" x1="0" y1="0" x2="0" y2="1">
-                                        <stop offset="5%" stopColor="var(--primary)" stopOpacity={0.2}/>
-                                        <stop offset="95%" stopColor="var(--primary)" stopOpacity={0}/>
-                                    </linearGradient>
-                                    <linearGradient id="colorProjected" x1="0" y1="0" x2="0" y2="1">
-                                        <stop offset="5%" stopColor="#4f46e5" stopOpacity={0.15}/>
-                                        <stop offset="95%" stopColor="#4f46e5" stopOpacity={0}/>
-                                    </linearGradient>
-                                </defs>
-                                <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                                <XAxis dataKey="month" stroke="#94a3b8" fontSize={11} tickLine={false} />
-                                <YAxis stroke="#94a3b8" fontSize={11} tickLine={false} />
-                                <Tooltip contentStyle={{ borderRadius: '8px', border: '1px solid #e2e8f0' }} />
-                                <Area type="monotone" dataKey="Collected" stroke="var(--primary)" strokeWidth={2} fillOpacity={1} fill="url(#colorRevenue)" name="Realized Collections" />
-                                <Area type="monotone" dataKey="Projected" stroke="#4f46e5" strokeWidth={2} fillOpacity={1} strokeDasharray="4 4" fill="url(#colorProjected)" name="Projected Yield" />
-                            </AreaChart>
-                        </ResponsiveContainer>
+                        {hasTrendData ? (
+                            <ResponsiveContainer width="100%" height="100%">
+                                <AreaChart data={stats.trendData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                                    <defs>
+                                        <linearGradient id="colorRevenue" x1="0" y1="0" x2="0" y2="1">
+                                            <stop offset="5%" stopColor="var(--primary)" stopOpacity={0.2}/>
+                                            <stop offset="95%" stopColor="var(--primary)" stopOpacity={0}/>
+                                        </linearGradient>
+                                        <linearGradient id="colorProjected" x1="0" y1="0" x2="0" y2="1">
+                                            <stop offset="5%" stopColor="#4f46e5" stopOpacity={0.15}/>
+                                            <stop offset="95%" stopColor="#4f46e5" stopOpacity={0}/>
+                                        </linearGradient>
+                                    </defs>
+                                    <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                                    <XAxis dataKey="month" stroke="#94a3b8" fontSize={11} tickLine={false} />
+                                    <YAxis stroke="#94a3b8" fontSize={11} tickLine={false} />
+                                    <Tooltip contentStyle={{ borderRadius: '8px', border: '1px solid #e2e8f0' }} />
+                                    <Area type="monotone" dataKey="Collected" stroke="var(--primary)" strokeWidth={2} fillOpacity={1} fill="url(#colorRevenue)" name="Realized Collections" />
+                                    <Area type="monotone" dataKey="Projected" stroke="#4f46e5" strokeWidth={2} fillOpacity={1} strokeDasharray="4 4" fill="url(#colorProjected)" name="Projected Yield" />
+                                </AreaChart>
+                            </ResponsiveContainer>
+                        ) : (
+                            <div className="h-full flex flex-col items-center justify-center border border-dashed border-slate-200 rounded-lg text-slate-400 bg-slate-50/50 p-6 min-h-[200px]">
+                                <p className="text-sm font-semibold text-center">Revenue trend will appear when monthly finance data is available.</p>
+                            </div>
+                        )}
                     </div>
                 </div>
 
@@ -262,28 +268,29 @@ const Dashboard = () => {
                     </div>
                     
                     <div className="space-y-3.5">
-                        {branchesList.slice(0, 3).map((branch, i) => (
-                             <div key={branch._id || i} className="flex items-center gap-4 p-1.5 rounded-lg hover:bg-slate-50 transition-colors cursor-pointer group/item">
-                                <div className="w-10 h-10 rounded-lg bg-slate-100 flex items-center justify-center font-black text-slate-400 group-hover/item:bg-[var(--primary)] group-hover/item:text-white transition-all text-sm">
-                                    0{i + 1}
-                                </div>
-                                <div className="flex-1">
-                                    <div className="flex items-center justify-between mb-1">
-                                        <h4 className="font-black text-slate-800 text-xs">{branch.name}</h4>
-                                        <span className={`text-[8px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full ${branch.isActive ? 'bg-emerald-50 text-emerald-600 border border-emerald-100' : 'bg-slate-50 text-slate-400'}`}>
-                                            {branch.isActive ? 'OPERATIONAL' : 'INACTIVE'}
-                                        </span>
+                        {branchesList.slice(0, 3).map((branch, i) => {
+                             const dist = stats.branchDistribution.find(d => d.branchId === branch._id);
+                             const count = dist ? dist.count : 0;
+                             return (
+                                 <div key={branch._id || i} className="flex items-center gap-4 p-1.5 rounded-lg hover:bg-slate-50 transition-colors cursor-pointer group/item">
+                                    <div className="w-10 h-10 rounded-lg bg-slate-100 flex items-center justify-center font-black text-slate-400 group-hover/item:bg-[var(--primary)] group-hover/item:text-white transition-all text-sm">
+                                        0{i + 1}
                                     </div>
-                                    <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden">
-                                        <div className="h-full bg-[var(--primary)] w-[70%]" />
+                                    <div className="flex-1">
+                                        <div className="flex items-center justify-between mb-2">
+                                            <h4 className="font-black text-slate-800 text-xs">{branch.name}</h4>
+                                            <span className={`text-[8px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full ${branch.isActive ? 'bg-emerald-50 text-emerald-600 border border-emerald-100' : 'bg-slate-50 text-slate-400'}`}>
+                                                {branch.isActive ? 'OPERATIONAL' : 'INACTIVE'}
+                                            </span>
+                                        </div>
+                                        <div className="flex justify-between mt-1 text-xs font-semibold text-slate-500">
+                                            <span>Enrolled Students</span>
+                                            <span className="font-bold text-slate-700">{count} student{count === 1 ? '' : 's'}</span>
+                                        </div>
                                     </div>
-                                    <div className="flex justify-between mt-1 text-[9px] font-bold text-slate-400 uppercase tracking-tight">
-                                        <span>Capacity Ratio</span>
-                                        <span>70% Capacity</span>
-                                    </div>
-                                </div>
-                             </div>
-                         ))}
+                                 </div>
+                             );
+                         })}
                     </div>
                 </div>
 
@@ -298,21 +305,31 @@ const Dashboard = () => {
                             <p className="text-[10px] font-bold opacity-50 uppercase tracking-wider">Latest administrative actions.</p>
                         </div>
                         
-                        <div className="space-y-4">
-                            {[1, 2, 3].map((i) => (
-                                 <div key={i} className="flex gap-3 group cursor-pointer">
-                                    <div className="flex flex-col items-center shrink-0">
-                                        <div className="w-2.5 h-2.5 rounded-full bg-blue-500 border border-white mt-1 group-hover:scale-125 transition-transform" />
-                                        <div className="w-0.5 h-8 bg-blue-500/20 mt-1" />
-                                    </div>
-                                    <div>
-                                        <p className="text-xs font-bold mb-0.5 group-hover:text-blue-400 transition-colors">Branch Activity Logged</p>
-                                        <p className="text-[10px] leading-tight opacity-50">Campus management actions recorded.</p>
-                                        <span className="text-[8px] font-black uppercase tracking-widest opacity-30">14 MINS AGO</span>
-                                    </div>
-                                 </div>
-                            ))}
-                        </div>
+                        {activities && activities.length > 0 ? (
+                            <div className="space-y-4">
+                                {activities.slice(0, 3).map((act) => (
+                                     <div key={act.id} className="flex gap-3 group cursor-pointer" onClick={() => navigate('/tenant/audit-logs')}>
+                                        <div className="flex flex-col items-center shrink-0">
+                                            <div className={`w-2 h-2 rounded-full border border-white mt-1 group-hover:scale-125 transition-transform ${
+                                                act.type === 'danger' ? 'bg-rose-500' :
+                                                act.type === 'warning' ? 'bg-amber-500' :
+                                                act.type === 'update' ? 'bg-indigo-500' : 'bg-blue-500'
+                                            }`} />
+                                            <div className="w-0.5 h-8 bg-blue-500/20 mt-1" />
+                                        </div>
+                                        <div className="min-w-0 flex-1">
+                                            <p className="text-xs font-bold mb-0.5 group-hover:text-blue-400 transition-colors truncate">{act.action}</p>
+                                            <p className="text-[10px] leading-tight opacity-50 truncate">By {act.actor} ({act.actorRole})</p>
+                                            <span className="text-[8px] font-black uppercase tracking-widest opacity-30">{new Date(act.timestamp).toLocaleString()}</span>
+                                        </div>
+                                     </div>
+                                ))}
+                            </div>
+                        ) : (
+                            <div className="h-44 flex flex-col items-center justify-center border border-dashed border-white/20 rounded-lg text-slate-400 bg-white/5 p-4 text-center">
+                                <p className="text-xs font-medium text-slate-300">Recent activity will appear here after staff actions are recorded.</p>
+                            </div>
+                        )}
 
                         <button onClick={() => navigate('/tenant/audit-logs')} className="w-full h-10 bg-white/10 hover:bg-white/20 transition-colors rounded-lg flex items-center justify-center gap-2 font-black text-[10px] tracking-widest uppercase">
                             Open Audit Module

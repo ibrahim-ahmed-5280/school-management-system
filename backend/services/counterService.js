@@ -13,3 +13,17 @@ exports.getNextStudentCode = async (tenantId, branchId) => {
     const paddedSeq = counter.seq.toString().padStart(3, '0');
     return `STD-${paddedSeq}`;
 };
+
+/**
+ * Generates an incremental receipt number like REC-000001, REC-000002...
+ */
+exports.getNextReceiptNumber = async (tenantId, branchId) => {
+    const counter = await Counter.findOneAndUpdate(
+        { tenantId, branchId, key: 'receiptNumber' },
+        { $inc: { seq: 1 } },
+        { new: true, upsert: true }
+    );
+
+    const paddedSeq = counter.seq.toString().padStart(6, '0');
+    return `REC-${paddedSeq}`;
+};

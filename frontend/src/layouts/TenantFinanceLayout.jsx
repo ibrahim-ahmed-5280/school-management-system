@@ -3,6 +3,7 @@ import { Outlet, Navigate } from 'react-router-dom';
 import Sidebar from '../components/layout/Sidebar';
 import Topbar from '../components/layout/Topbar';
 import { useAuth } from '../context/AuthContext';
+import { hasPermission } from '../utils/permissions';
 
 const TenantFinanceLayout = () => {
     const { user, loading } = useAuth();
@@ -11,10 +12,10 @@ const TenantFinanceLayout = () => {
     if (loading) return null;
 
     if (!user) {
-        return <Navigate to="/tenant/login" replace />;
+        return <Navigate to="/finance/login" replace />;
     }
 
-    if (user.role !== 'finance_director' && user.role !== 'super_admin') {
+    if (user.role !== 'finance_director' || !hasPermission(user, 'finance.dashboard.view')) {
         return <div className="p-10 text-center text-red-500 font-bold">Unauthorized Access</div>;
     }
 

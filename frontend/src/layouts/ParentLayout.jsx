@@ -3,6 +3,7 @@ import React, { useState, useEffect } from 'react';
 import { Outlet, NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useBranding } from '../context/BrandingContext';
+import { filterMenuByPermission } from '../utils/permissions';
 import {
     LayoutDashboard,
     FileText,
@@ -25,12 +26,13 @@ const ParentLayout = () => {
     const [showNotifications, setShowNotifications] = useState(false);
     const navigate = useNavigate();
 
-    const menuItems = [
-        { icon: LayoutDashboard, label: 'Dashboard', path: '/parent' },
-        { icon: FileText, label: 'Grades & Ranks', path: '/parent/grades' },
-        { icon: CalendarCheck, label: 'Attendance', path: '/parent/attendance' },
-        { icon: CreditCard, label: 'Fees & Invoices', path: '/parent/invoices' }
-    ];
+    const menuItems = filterMenuByPermission(user, [
+        { icon: LayoutDashboard, label: 'Dashboard', path: '/parent', permission: 'parent.dashboard.view' },
+        { icon: FileText, label: 'Grades & Ranks', path: '/parent/grades', permission: 'parent.grades.view' },
+        { icon: CalendarCheck, label: 'Attendance', path: '/parent/attendance', permission: 'parent.attendance.view' },
+        { icon: CreditCard, label: 'Fees & Invoices', path: '/parent/invoices', permission: 'parent.invoices.view' },
+        { icon: User, label: 'My Profile', path: '/parent/profile', permission: 'parent.profile.view' }
+    ]);
 
     const fetchNotifications = async () => {
         try {

@@ -1,8 +1,8 @@
 import React, { useCallback, useState, useEffect } from 'react';
 import { getInvoices } from '../../services/api/finance.api';
 import { getBranches, getAcademicYears } from '../../services/api/tenant.api';
-import { Card, Select, Badge, Button, Input } from '../../components/ui';
-import { FileText, Filter, Search, Eye, Plus } from 'lucide-react';
+import { Card, Select, Badge, Button } from '../../components/ui';
+import { Search, Eye, Plus } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
 const Invoices = () => {
@@ -74,10 +74,10 @@ const Invoices = () => {
                     <Select 
                         label="Status"
                         options={[
-                            {label: 'Paid', value: 'Paid'},
-                            {label: 'Unpaid', value: 'Unpaid'},
-                            {label: 'Partial', value: 'Partial'},
-                            {label: 'Void', value: 'Void'},
+                            {label: 'PAID', value: 'PAID'},
+                            {label: 'UNPAID', value: 'UNPAID'},
+                            {label: 'PARTIALLY_PAID', value: 'PARTIALLY_PAID'},
+                            {label: 'VOID', value: 'VOID'},
                         ]}
                         value={filters.status}
                         onChange={e => setFilters({...filters, status: e.target.value})}
@@ -119,13 +119,15 @@ const Invoices = () => {
                             invoices.map(inv => (
                                 <tr key={inv._id} className="hover:bg-slate-50 transition-colors group">
                                     <td className="px-6 py-4 text-slate-600 font-mono text-sm">INV-{inv._id.slice(-6)}</td>
-                                    <td className="px-6 py-4 text-slate-900 font-bold">{inv.studentName || inv.studentId}</td>
-                                    <td className="px-6 py-4 text-slate-500 text-sm">{new Date(inv.dueDate).toLocaleDateString()}</td>
+                                    <td className="px-6 py-4 text-slate-900 font-bold">
+                                        {inv.studentId && typeof inv.studentId === 'object' ? `${inv.studentId.firstName} ${inv.studentId.lastName}` : (inv.studentName || 'N/A')}
+                                    </td>
+                                    <td className="px-6 py-4 text-slate-500 text-sm">{inv.dueDate ? new Date(inv.dueDate).toLocaleDateString() : 'N/A'}</td>
                                     <td className="px-6 py-4 text-right text-slate-900">${inv.totalAmount?.toLocaleString()}</td>
                                     <td className="px-6 py-4 text-right text-emerald-600">${inv.paidAmount?.toLocaleString()}</td>
                                     <td className="px-6 py-4 text-right text-rose-500 font-bold">${(inv.totalAmount - inv.paidAmount)?.toLocaleString()}</td>
                                     <td className="px-6 py-4 text-center">
-                                        <Badge variant={inv.status === 'Paid' ? 'success' : inv.status === 'Partial' ? 'warning' : 'danger'}>
+                                        <Badge variant={inv.status === 'PAID' ? 'success' : inv.status === 'PARTIALLY_PAID' ? 'warning' : 'danger'}>
                                             {inv.status}
                                         </Badge>
                                     </td>
@@ -145,5 +147,3 @@ const Invoices = () => {
 };
 
 export default Invoices;
-
-

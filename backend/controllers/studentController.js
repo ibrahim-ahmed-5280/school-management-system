@@ -2,6 +2,9 @@ const Student = require('../models/Student');
 const Enrollment = require('../models/Enrollment');
 const TeacherAssignment = require('../models/TeacherAssignment');
 const Branch = require('../models/Branch');
+const Class = require('../models/Class');
+const AcademicYear = require('../models/AcademicYear');
+const Section = require('../models/Section');
 
 const applyBranchScope = (req, query) => {
     if (req.scope === 'branch') query.branchId = req.branchId;
@@ -21,7 +24,7 @@ const canAccessStudent = (req, studentId) => {
 const admitStudent = async (req, res) => {
     let { 
         admissionNumber, firstName, lastName, DOB, gender, guardianInfo, 
-        classId, academicYearId, branchId
+        classId, academicYearId, branchId, sectionId
     } = req.body;
 
     try {
@@ -39,6 +42,56 @@ const admitStudent = async (req, res) => {
 
         const branch = branchId && await Branch.findOne({ _id: branchId, tenantId: req.tenantId, isActive: true });
         if (!branch) return res.status(400).json({ message: 'A valid active branch is required' });
+
+        // Validate class
+        const targetClass = await Class.findOne({ _id: classId, tenantId: req.tenantId, branchId });
+        if (!targetClass) {
+            return res.status(400).json({ message: 'Invalid class for this branch.' });
+        }
+
+        // Validate academic year
+        const targetYear = await AcademicYear.findOne({ _id: academicYearId, tenantId: req.tenantId });
+        if (!targetYear) {
+            return res.status(400).json({ message: 'Invalid academic year for this tenant.' });
+        }
+
+        // Validate section (if provided)
+        let resolvedSectionId = null;
+        if (sectionId) {
+            const section = await Section.findOne({
+                _id: sectionId,
+                tenantId: req.tenantId,
+                branchId,
+                classId,
+                isActive: { $ne: false }
+            });
+            if (!section) {
+                return res.status(400).json({ message: 'Invalid section for this class or branch.' });
+            }
+
+            // Enforce capacity check if section capacity exists
+            if (section.capacity && section.capacity > 0) {
+                const activeCount = await Enrollment.countDocuments({
+                    tenantId: req.tenantId,
+                    branchId,
+                    sectionId: section._id,
+                    academicYearId,
+                    status: { $in: ['Current', 'Active', 'current', 'active'] }
+                });
+                if (activeCount >= section.capacity) {
+                    return res.status(400).json({ message: 'Section capacity has been reached.' });
+                }
+            }
+            resolvedSectionId = section._id;
+        }
+
+        const existingStudent = await Student.findOne({
+            tenantId: req.tenantId,
+            admissionNumber
+        });
+        if (existingStudent) {
+            return res.status(409).json({ message: 'Admission number already exists for this school.' });
+        }
 
         const student = await Student.create({
             tenantId: req.tenantId,
@@ -58,6 +111,7 @@ const admitStudent = async (req, res) => {
                 branchId,
                 studentId: student._id,
                 classId,
+                sectionId: resolvedSectionId || null,
                 academicYearId,
                 status: 'Current'
             });
@@ -69,6 +123,19 @@ const admitStudent = async (req, res) => {
         // ... Fees and Response ...
         res.status(201).json({ student, enrollment });
     } catch (error) {
+        if (error.name === 'ValidationError') {
+            return res.status(400).json({ message: error.message });
+        }
+        if (error.code === 11000) {
+            const errStr = JSON.stringify(error.keyValue || error.message || '');
+            if (errStr.includes('admissionNumber') || errStr.includes('studentCode')) {
+                return res.status(409).json({ message: 'Admission number already exists for this school.' });
+            }
+            if (errStr.includes('email')) {
+                return res.status(409).json({ message: 'Email already exists for this school.' });
+            }
+            return res.status(409).json({ message: 'Duplicate key error.' });
+        }
         res.status(500).json({ message: error.message });
     }
 };

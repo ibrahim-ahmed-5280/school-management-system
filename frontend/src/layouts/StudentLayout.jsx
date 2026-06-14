@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Outlet, NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useBranding } from '../context/BrandingContext';
+import { filterMenuByPermission } from '../utils/permissions';
 import {
     LayoutDashboard,
     FileText,
@@ -12,7 +13,8 @@ import {
     X,
     GraduationCap,
     Trophy,
-    CalendarDays
+    CalendarDays,
+    Lock
 } from 'lucide-react';
 
 const StudentLayout = () => {
@@ -21,14 +23,15 @@ const StudentLayout = () => {
     const [sidebarOpen, setSidebarOpen] = useState(false);
     const navigate = useNavigate();
 
-    const menuItems = [
-        { icon: LayoutDashboard, label: 'Dashboard', path: '/student' },
-        { icon: FileText, label: 'My Results', path: '/student/results' },
-        { icon: Trophy, label: 'My Rank', path: '/student/rank' },
-        { icon: CalendarDays, label: 'My Schedule', path: '/student/schedule' },
-        { icon: CalendarCheck, label: 'Attendance', path: '/student/attendance' },
-        { icon: User, label: 'Profile', path: '/student/profile' }
-    ];
+    const menuItems = filterMenuByPermission(user, [
+        { icon: LayoutDashboard, label: 'Dashboard', path: '/student', permission: 'student.dashboard.view' },
+        { icon: FileText, label: 'My Results', path: '/student/results', permission: 'student.results.view' },
+        { icon: Trophy, label: 'My Rank', path: '/student/rank', permission: 'student.rank.view' },
+        { icon: CalendarDays, label: 'My Schedule', path: '/student/schedule', permission: 'student.schedule.view' },
+        { icon: CalendarCheck, label: 'Attendance', path: '/student/attendance', permission: 'student.attendance.view' },
+        { icon: User, label: 'Profile', path: '/student/profile', permission: 'student.profile.view' },
+        { icon: Lock, label: 'Change Password', path: '/student/change-password', permission: 'student.password.change' }
+    ]);
 
     const handleLogout = () => {
         logout();
@@ -108,7 +111,6 @@ const StudentLayout = () => {
                     </div>
 
                     <div className="flex items-center gap-3">
-
                         <div className="hidden text-right sm:block">
                             <p className="text-sm font-semibold text-slate-900">{user?.name}</p>
                             <p className="text-xs uppercase tracking-wide text-slate-500">{user?.username}</p>

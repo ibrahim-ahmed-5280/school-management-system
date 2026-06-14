@@ -11,20 +11,23 @@ import {
     Image as ImageIcon
 } from 'lucide-react';
 import { useBranding } from '../../context/BrandingContext';
+import { useAuth } from '../../context/AuthContext';
+import { filterMenuByPermission } from '../../utils/permissions';
 
 const Sidebar = ({ className = '', onNavigate }) => {
     const { branding } = useBranding();
+    const { user } = useAuth();
 
-    const menuItems = [
-        { name: 'Finance Dashboard', path: '/finance', icon: LayoutDashboard },
-        { name: 'Policies', path: '/finance/policies', icon: Settings },
-        { name: 'Fee Structures', path: '/finance/fee-structures', icon: CreditCard },
-        { name: 'Invoices', path: '/finance/invoices', icon: FileText },
-        { name: 'Payments', path: '/finance/payments', icon: History },
-        { name: 'Reports', path: '/finance/reports', icon: PieChart },
-        { name: 'Outstanding', path: '/finance/outstanding', icon: AlertCircle },
-        { name: 'Receipt Branding', path: '/finance/receipt-branding', icon: ImageIcon }
-    ];
+    const menuItems = filterMenuByPermission(user, [
+        { name: 'Finance Dashboard', path: '/finance', icon: LayoutDashboard, permission: 'finance.dashboard.view' },
+        { name: 'Policies', path: '/finance/policies', icon: Settings, permission: 'finance.policies.view' },
+        { name: 'Fee Structures', path: '/finance/fee-structures', icon: CreditCard, permission: 'finance.feeStructures.view' },
+        { name: 'Invoices', path: '/finance/invoices', icon: FileText, permission: 'finance.invoices.view' },
+        { name: 'Payments', path: '/finance/payments', icon: History, permission: 'finance.payments.view' },
+        { name: 'Reports', path: '/finance/reports', icon: PieChart, permission: 'finance.reports.view' },
+        { name: 'Outstanding', path: '/finance/outstanding', icon: AlertCircle, permission: 'finance.outstanding.view' },
+        { name: 'Receipt Branding', path: '/finance/receipt-branding', icon: ImageIcon, permission: 'finance.receiptBranding.view' }
+    ]);
 
     return (
         <aside className={`w-64 bg-[var(--sidebar-bg)] text-slate-200 border-r border-[var(--sidebar-border)] ${className}`}>

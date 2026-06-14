@@ -3,6 +3,8 @@ const User = require('../models/User');
 const Tenant = require('../models/Tenant');
 const Branch = require('../models/Branch');
 const { getExpectedScope } = require('../utils/rolePolicy');
+const { getEffectivePermissions } = require('../utils/permissions');
+const { resolveTenantStatus } = require('../services/tenantStatusService');
 
 const protect = async (req, res, next) => {
     let token;
@@ -24,6 +26,7 @@ const protect = async (req, res, next) => {
             req.branchId = req.user.branchId;
             req.role = req.user.role;
             req.scope = req.user.scope;
+            req.permissions = getEffectivePermissions(req.user);
 
             const expectedScope = getExpectedScope(req.role);
             if (!expectedScope || expectedScope !== req.scope) {
@@ -35,9 +38,11 @@ const protect = async (req, res, next) => {
             }
 
             if (req.tenantId) {
-                const tenant = await Tenant.findById(req.tenantId).select('isActive isApproved');
-                if (!tenant || !tenant.isActive || tenant.isApproved === false) {
-                    return res.status(403).json({ message: 'Institution is inactive or pending approval' });
+                const tenant = await Tenant.findById(req.tenantId).select('status isActive isApproved');
+                if (!tenant || resolveTenantStatus(tenant) !== 'active') {
+                    return res.status(403).json({
+                        message: `Institution is ${tenant ? resolveTenantStatus(tenant) : 'unavailable'}`
+                    });
                 }
             }
 

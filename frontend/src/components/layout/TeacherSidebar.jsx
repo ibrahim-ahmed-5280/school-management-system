@@ -12,26 +12,29 @@ import {
     CalendarCheck,
     CalendarDays,
     Settings,
-    FileSpreadsheet
+    FileSpreadsheet,
+    User
 } from 'lucide-react';
+import { filterMenuByPermission } from '../../utils/permissions';
 
 const TeacherSidebar = ({ className = '', onNavigate }) => {
-    const { logout } = useAuth();
+    const { logout, user } = useAuth();
     const { branding } = useBranding();
     const navigate = useNavigate();
 
-    const menuItems = [
-        { label: 'Dashboard', icon: LayoutDashboard, path: '/teacher' },
-        { label: 'My Schedule', icon: CalendarDays, path: '/teacher/schedule' },
-        { label: 'Open Attendance', icon: CalendarCheck, path: '/teacher/attendance' },
-        { label: 'Leaves Request', icon: CalendarCheck, path: '/teacher/leaves' },
-        { label: 'Templates', icon: FileSpreadsheet, path: '/teacher/templates' },
-        { label: 'Categories', icon: Settings, path: '/teacher/categories' },
-        { label: 'Exams List', icon: BookOpen, path: '/teacher/exams' },
-        { label: 'Enter Results', icon: PenTool, path: '/teacher/results-entry' },
-        { label: 'Results Viewer', icon: BarChart3, path: '/teacher/results' },
-        { label: 'Grading Policy', icon: FileSpreadsheet, path: '/teacher/grading-policy' }
-    ];
+    const menuItems = filterMenuByPermission(user, [
+        { label: 'Dashboard', icon: LayoutDashboard, path: '/teacher', permission: 'teacher.dashboard.view' },
+        { label: 'My Schedule', icon: CalendarDays, path: '/teacher/schedule', permission: 'teacher.schedule.view' },
+        { label: 'Open Attendance', icon: CalendarCheck, path: '/teacher/attendance', permission: 'teacher.attendance.view' },
+        { label: 'Leaves Request', icon: CalendarCheck, path: '/teacher/leaves', anyPermission: ['teacher.leaves.create', 'hr.leaves.create'] },
+        { label: 'Templates', icon: FileSpreadsheet, path: '/teacher/templates', permission: 'teacher.examTemplates.view' },
+        { label: 'Categories', icon: Settings, path: '/teacher/categories', permission: 'teacher.examCategories.view' },
+        { label: 'Exams List', icon: BookOpen, path: '/teacher/exams', permission: 'teacher.exams.view' },
+        { label: 'Enter Results', icon: PenTool, path: '/teacher/results-entry', permission: 'teacher.results.enter' },
+        { label: 'Results Viewer', icon: BarChart3, path: '/teacher/results', permission: 'teacher.results.view' },
+        { label: 'Grading Policy', icon: FileSpreadsheet, path: '/teacher/grading-policy', permission: 'teacher.gradingPolicy.view' },
+        { label: 'My Profile', icon: User, path: '/teacher/profile' }
+    ]);
 
     const handleLogout = () => {
         logout();

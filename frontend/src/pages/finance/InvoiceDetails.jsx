@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { getInvoice } from '../../services/api/finance.api';
 import { Card, Button, Badge } from '../../components/ui';
-import { ArrowLeft, Printer } from 'lucide-react';
+import { ArrowLeft, Printer, Mail } from 'lucide-react';
 
 const InvoiceDetails = () => {
     const { invoiceId } = useParams();
@@ -27,6 +27,9 @@ const InvoiceDetails = () => {
     if (loading) return <div className="p-8 text-center">Loading Invoice Details...</div>;
     if (!invoice) return <div className="p-8 text-center text-red-500">Invoice not found</div>;
 
+    const studentName = invoice.studentId ? `${invoice.studentId.firstName} ${invoice.studentId.lastName}` : 'N/A';
+    const studentRef = invoice.studentId ? `ID: ${invoice.studentId.admissionNumber}` : 'N/A';
+
     return (
         <div className="max-w-4xl mx-auto space-y-6">
             <Button variant="ghost" onClick={() => navigate(-1)} className="flex items-center gap-2 mb-4">
@@ -49,19 +52,19 @@ const InvoiceDetails = () => {
                 <Card className="md:col-span-2">
                     <div className="border-b pb-4 mb-4 flex justify-between items-center">
                         <span className="font-bold text-slate-700">Bill To</span>
-                         <Badge variant={invoice.status === 'Paid' ? 'success' : invoice.status === 'Partial' ? 'warning' : 'danger'}>
+                         <Badge variant={invoice.status === 'PAID' ? 'success' : invoice.status === 'PARTIALLY_PAID' ? 'warning' : 'danger'}>
                             {invoice.status}
                         </Badge>
                     </div>
                     <div className="grid grid-cols-2 gap-8 mb-6">
                         <div>
                             <p className="text-sm text-slate-500 uppercase font-bold tracking-wider mb-1">Student</p>
-                            <p className="font-bold text-lg text-slate-900">{invoice.studentName}</p>
-                            <p className="text-slate-600">{invoice.studentRef || 'N/A'}</p>
+                            <p className="font-bold text-lg text-slate-900">{studentName}</p>
+                            <p className="text-slate-600">{studentRef}</p>
                         </div>
                         <div className="text-right">
                              <p className="text-sm text-slate-500 uppercase font-bold tracking-wider mb-1">Due Date</p>
-                             <p className="font-bold text-lg text-slate-900">{new Date(invoice.dueDate).toLocaleDateString()}</p>
+                             <p className="font-bold text-lg text-slate-900">{invoice.dueDate ? new Date(invoice.dueDate).toLocaleDateString() : 'N/A'}</p>
                         </div>
                     </div>
 
@@ -109,7 +112,7 @@ const InvoiceDetails = () => {
                                 <div key={idx} className="flex justify-between items-center text-sm border-b last:border-0 pb-2 last:pb-0">
                                     <div>
                                         <p className="font-bold text-slate-700">{new Date(pay.date).toLocaleDateString()}</p>
-                                        <p className="text-xs text-slate-500">{pay.method}</p>
+                                        <p className="text-xs text-slate-500">{pay.method} ({pay.recordedBy})</p>
                                     </div>
                                     <span className="font-bold text-emerald-600">+${pay.amount.toLocaleString()}</span>
                                 </div>
@@ -134,5 +137,3 @@ const InvoiceDetails = () => {
 };
 
 export default InvoiceDetails;
-
-

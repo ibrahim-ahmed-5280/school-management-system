@@ -6,6 +6,9 @@ const Invoice = require('../models/Invoice');
 const Payment = require('../models/Payment');
 const Notification = require('../models/Notification');
 const Enrollment = require('../models/Enrollment');
+const ClassSubject = require('../models/ClassSubject');
+const Exam = require('../models/Exam');
+const AttendanceSession = require('../models/AttendanceSession');
 
 const sendResponse = (res, success, data = null, message = '') => {
     return res.json({ success, message, data });
@@ -84,20 +87,30 @@ const getParentDashboard = async (req, res) => {
 const getStudentGrades = async (req, res) => {
     try {
         const { studentId } = req.params;
+        const { schoolYearId, academicYearId } = req.query || {};
+        const yearId = schoolYearId || academicYearId;
 
         if (!verifyParentAccess(req, studentId)) {
             return sendError(res, 403, 'Unauthorized access to student record');
         }
 
-        const results = await Result.find({
+        const query = {
             studentId,
             tenantId: req.tenantId
-        })
+        };
+
+        if (yearId) {
+            const exams = await Exam.find({ academicYearId: yearId, tenantId: req.tenantId }).select('_id');
+            query.examId = { $in: exams.map(e => e._id) };
+        }
+
+        const results = await Result.find(query)
         .populate({
             path: 'examId',
             populate: [
                 { path: 'subjectId', select: 'name code' },
-                { path: 'examCategoryId', select: 'name' }
+                { path: 'examCategoryId', select: 'name' },
+                { path: 'classId', select: 'name' }
             ]
         })
         .sort({ createdAt: -1 });
@@ -114,15 +127,27 @@ const getStudentGrades = async (req, res) => {
 const getStudentAttendance = async (req, res) => {
     try {
         const { studentId } = req.params;
+        const { schoolYearId, academicYearId } = req.query || {};
+        const yearId = schoolYearId || academicYearId;
 
         if (!verifyParentAccess(req, studentId)) {
             return sendError(res, 403, 'Unauthorized access to student record');
         }
 
-        const records = await AttendanceRecord.find({
+        const query = {
             studentId,
             tenantId: req.tenantId
-        })
+        };
+
+        if (yearId) {
+            const sessions = await AttendanceSession.find({
+                tenantId: req.tenantId,
+                academicYearId: yearId
+            }).select('_id');
+            query.sessionId = { $in: sessions.map(s => s._id) };
+        }
+
+        const records = await AttendanceRecord.find(query)
         .populate({
             path: 'sessionId',
             select: 'date period teacherUserId',
@@ -142,15 +167,23 @@ const getStudentAttendance = async (req, res) => {
 const getStudentInvoices = async (req, res) => {
     try {
         const { studentId } = req.params;
+        const { schoolYearId, academicYearId } = req.query || {};
+        const yearId = schoolYearId || academicYearId;
 
         if (!verifyParentAccess(req, studentId)) {
             return sendError(res, 403, 'Unauthorized access to student record');
         }
 
-        const invoices = await Invoice.find({
+        const invoiceQuery = {
             studentId,
             tenantId: req.tenantId
-        }).sort({ createdAt: -1 });
+        };
+
+        if (yearId) {
+            invoiceQuery.academicYearId = yearId;
+        }
+
+        const invoices = await Invoice.find(invoiceQuery).sort({ createdAt: -1 });
 
         const payments = await Payment.find({
             invoiceId: { $in: invoices.map(i => i._id) },
@@ -197,11 +230,292 @@ const markNotificationRead = async (req, res) => {
     }
 };
 
+// @desc    Get Parent Profile
+// @route   GET /api/parent/profile
+// @access  Private (Parent)
+const getProfile = async (req, res) => {
+    try {
+        const user = await User.findById(req.user._id).select('-passwordHash');
+        if (!user) return sendError(res, 404, 'User not found');
+        sendResponse(res, true, user);
+    } catch (error) {
+        sendError(res, 500, error.message);
+    }
+};
+
+// @desc    Update Parent Profile
+// @route   PUT /api/parent/profile
+// @access  Private (Parent)
+const updateProfile = async (req, res) => {
+    try {
+        const { name, phone, address } = req.body;
+        const user = await User.findById(req.user._id);
+        if (!user) return sendError(res, 404, 'User not found');
+
+        if (name !== undefined) user.name = name;
+        if (phone !== undefined) user.phone = phone;
+        if (address !== undefined) user.address = address;
+
+        await user.save();
+
+        const updatedUser = await User.findById(req.user._id).select('-passwordHash');
+        sendResponse(res, true, updatedUser, 'Profile updated successfully');
+    } catch (error) {
+        sendError(res, 500, error.message);
+    }
+};
+
+// @desc    Change Parent Password
+// @route   PUT /api/parent/change-password
+// @access  Private (Parent)
+const changePassword = async (req, res) => {
+    try {
+        const { oldPassword, newPassword } = req.body;
+
+        if (!oldPassword || !newPassword) {
+            return sendError(res, 400, 'Current password and new password are required');
+        }
+
+        if (String(newPassword).length < 8) {
+            return sendError(res, 400, 'New password must be at least 8 characters long');
+        }
+
+        const user = await User.findById(req.user._id);
+        if (!user) return sendError(res, 404, 'User not found');
+
+        const isMatch = await user.comparePassword(oldPassword);
+        if (!isMatch) return sendError(res, 400, 'Invalid current password');
+
+        user.passwordHash = newPassword;
+        user.mustChangePassword = false;
+        await user.save();
+
+        sendResponse(res, true, null, 'Password changed successfully');
+    } catch (error) {
+        sendError(res, 500, error.message);
+    }
+};
+
+// @desc    Get Student Academic Years History
+// @route   GET /api/parent/students/:studentId/academic-years
+// @access  Private (Parent)
+const getStudentAcademicYears = async (req, res) => {
+    try {
+        const { studentId } = req.params;
+        if (!verifyParentAccess(req, studentId)) {
+            return sendError(res, 403, 'Unauthorized access to student record');
+        }
+
+        const enrollments = await Enrollment.find({
+            tenantId: req.tenantId,
+            studentId
+        })
+        .sort({ createdAt: -1 })
+        .populate('academicYearId', 'name isCurrent')
+        .populate('classId', 'name')
+        .populate('branchId', 'name');
+
+        const yearMap = new Map();
+        for (const enrollment of enrollments) {
+            const year = enrollment.academicYearId;
+            if (!year?._id) continue;
+            const key = String(year._id);
+            if (yearMap.has(key)) continue;
+
+            yearMap.set(key, {
+                _id: year._id,
+                name: year.name,
+                isCurrent: !!year.isCurrent,
+                classId: enrollment.classId?._id || null,
+                className: enrollment.classId?.name || '',
+                branchId: enrollment.branchId?._id || null,
+                branchName: enrollment.branchId?.name || '',
+                enrollmentStatus: enrollment.status
+            });
+        }
+
+        sendResponse(res, true, Array.from(yearMap.values()));
+    } catch (error) {
+        sendError(res, 500, error.message);
+    }
+};
+
+// @desc    Get Student Rank details
+// @route   GET /api/parent/students/:studentId/rank
+// @access  Private (Parent)
+const getStudentRank = async (req, res) => {
+    try {
+        const { studentId } = req.params;
+        if (!verifyParentAccess(req, studentId)) {
+            return sendError(res, 403, 'Unauthorized access to student record');
+        }
+
+        const { schoolYearId, academicYearId, term } = req.query || {};
+        const yearId = schoolYearId || academicYearId;
+
+        const enrollmentQuery = {
+            tenantId: req.tenantId,
+            studentId
+        };
+        if (yearId) {
+            enrollmentQuery.academicYearId = yearId;
+        } else {
+            enrollmentQuery.status = { $in: ['Current', 'Active', 'active'] };
+        }
+
+        const enrollment = await Enrollment.findOne(enrollmentQuery)
+            .sort({ createdAt: -1 })
+            .populate('academicYearId', 'name')
+            .populate('classId', 'name');
+
+        if (!enrollment) {
+            return sendResponse(res, true, { rank: null, classSize: 0, totalMarks: 0, overallStatus: 'FAIL' }, 'No active enrollment found');
+        }
+
+        const curriculum = await ClassSubject.find({
+            tenantId: req.tenantId,
+            branchId: enrollment.branchId,
+            classId: enrollment.classId,
+            isActive: true,
+            $or: [
+                { academicYearId: enrollment.academicYearId },
+                { academicYearId: { $exists: false } },
+                { academicYearId: null }
+            ]
+        }).populate('subjectId', 'name');
+
+        const subjectMetaMap = new Map();
+        curriculum.forEach(c => {
+            const subjectId = (c.subjectId?._id || c.subjectId).toString();
+            if (!subjectMetaMap.has(subjectId)) {
+                subjectMetaMap.set(subjectId, {
+                    subjectId,
+                    passMarkPercent: c.passMarkPercent || 40
+                });
+            }
+        });
+        const subjectMeta = Array.from(subjectMetaMap.values());
+
+        const exams = await Exam.find({
+            tenantId: req.tenantId,
+            branchId: enrollment.branchId,
+            classId: enrollment.classId,
+            academicYearId: enrollment.academicYearId,
+            ...(term ? { termId: term } : {}),
+            subjectId: { $in: subjectMeta.map(s => s.subjectId) }
+        }).populate('examCategoryId', 'maxScore').select('subjectId examCategoryId');
+
+        const subjectMaxMap = new Map();
+        exams.forEach(exam => {
+            const subjectId = (exam.subjectId?._id || exam.subjectId).toString();
+            const maxScore = exam.examCategoryId?.maxScore || 100;
+            subjectMaxMap.set(subjectId, (subjectMaxMap.get(subjectId) || 0) + maxScore);
+        });
+
+        const totalMax = subjectMeta.reduce((sum, meta) => sum + (subjectMaxMap.get(meta.subjectId) || 0), 0) || (subjectMeta.length * 100);
+        const overallPassMark = totalMax / 2;
+
+        const peerEnrollmentQuery = {
+            tenantId: req.tenantId,
+            branchId: enrollment.branchId,
+            classId: enrollment.classId,
+            academicYearId: enrollment.academicYearId
+        };
+        if (!yearId) {
+            peerEnrollmentQuery.status = { $in: ['Current', 'Active', 'active'] };
+        }
+
+        const enrollments = await Enrollment.find(peerEnrollmentQuery).select('studentId');
+        const studentIds = enrollments.map(e => e.studentId);
+
+        const students = await Student.find({
+            tenantId: req.tenantId,
+            branchId: enrollment.branchId,
+            _id: { $in: studentIds }
+        }).select('admissionNumber');
+        const admissionMap = new Map(students.map(s => [s._id.toString(), s.admissionNumber || '']));
+
+        const results = await Result.find({
+            tenantId: req.tenantId,
+            branchId: enrollment.branchId,
+            studentId: { $in: studentIds }
+        }).populate({
+            path: 'examId',
+            match: {
+                classId: enrollment.classId,
+                academicYearId: enrollment.academicYearId,
+                ...(term ? { termId: term } : {})
+            },
+            select: 'subjectId startDate createdAt',
+            populate: { path: 'subjectId', select: '_id' }
+        });
+
+        const filtered = results.filter(r => r.examId && r.examId.subjectId);
+        const totalsMap = new Map();
+
+        for (const r of filtered) {
+            const sId = r.studentId.toString();
+            const subjectId = (r.examId.subjectId?._id || r.examId.subjectId).toString();
+            if (!totalsMap.has(sId)) totalsMap.set(sId, new Map());
+            const subjectMap = totalsMap.get(sId);
+            subjectMap.set(subjectId, (subjectMap.get(subjectId) || 0) + (r.marksObtained || 0));
+        }
+
+        const stats = studentIds.map(id => {
+            const sid = id.toString();
+            const subjectMap = totalsMap.get(sid) || new Map();
+            let totalMarks = 0;
+            let failedSubjects = 0;
+            for (const meta of subjectMeta) {
+                const entry = subjectMap.get(meta.subjectId);
+                const marks = entry || 0;
+                totalMarks += marks;
+                const subjectMax = subjectMaxMap.get(meta.subjectId) || 0;
+                const percentage = subjectMax > 0 ? (marks / subjectMax) * 100 : 0;
+                if (percentage < meta.passMarkPercent) failedSubjects += 1;
+            }
+            return {
+                studentId: sid,
+                totalMarks,
+                failedSubjects,
+                admissionNumber: admissionMap.get(sid) || ''
+            };
+        });
+
+        stats.sort((a, b) => {
+            if (b.totalMarks !== a.totalMarks) return b.totalMarks - a.totalMarks;
+            if (a.failedSubjects !== b.failedSubjects) return a.failedSubjects - b.failedSubjects;
+            return a.admissionNumber.localeCompare(b.admissionNumber, undefined, { numeric: true, sensitivity: 'base' });
+        });
+
+        const index = stats.findIndex(s => s.studentId === studentId.toString());
+        const rank = index >= 0 ? index + 1 : null;
+        const myStats = index >= 0 ? stats[index] : { totalMarks: 0 };
+        const overallStatus = myStats.totalMarks >= overallPassMark ? 'PASS' : 'FAIL';
+
+        sendResponse(res, true, {
+            rank,
+            classSize: stats.length,
+            totalMarks: myStats.totalMarks,
+            overallStatus,
+            className: enrollment.classId?.name || 'N/A',
+            academicYearName: enrollment.academicYearId?.name || 'N/A'
+        });
+      } catch (error) {
+          sendError(res, 500, error.message);
+      }
+};
+
 module.exports = {
     getParentDashboard,
     getStudentGrades,
     getStudentAttendance,
     getStudentInvoices,
     getNotifications,
-    markNotificationRead
+    markNotificationRead,
+    getProfile,
+    updateProfile,
+    changePassword,
+    getStudentAcademicYears,
+    getStudentRank
 };

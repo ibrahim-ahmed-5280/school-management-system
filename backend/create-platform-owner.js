@@ -28,6 +28,7 @@ const createPlatformOwner = async () => {
             passwordHash: password, // Pre-save hook will hash this
             role: 'platform_owner',
             scope: 'platform',
+            permissionProfile: 'default_platform_owner',
             isActive: true
             // tenantId is optional for platform_owner now
         });

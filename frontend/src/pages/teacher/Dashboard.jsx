@@ -1,24 +1,63 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { Card, Spinner, Badge, Button } from '../../components/ui';
 import { getExams, getGradingPolicy, getTeacherAssignments } from '../../services/api/teacher.api';
-import { 
-    BookOpen, 
-    TrendingUp, 
-    PlusCircle,
-    FileSpreadsheet,
-    ChevronRight,
-    Trophy,
+import { useAuth } from '../../context/AuthContext';
+import {
+    ArrowRight,
+    Award,
+    BookOpen,
     Calendar,
-    Users,
-    Activity,
-    Target,
-    Layout,
+    ClipboardList,
     Clock,
-    Award
+    FileSpreadsheet,
+    GraduationCap,
+    LayoutDashboard,
+    PenLine,
+    Target,
+    Users
 } from 'lucide-react';
-import { Link } from 'react-router-dom';
+
+const asArray = (payload) => {
+    if (Array.isArray(payload)) return payload;
+    if (Array.isArray(payload?.data)) return payload.data;
+    return [];
+};
+
+const getId = (value) => value?._id || value || '';
+
+const formatDate = (value) => {
+    if (!value) return 'Not scheduled';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return 'Not scheduled';
+    return date.toLocaleDateString();
+};
+
+const StatCard = ({ label, value, icon, tone = 'blue' }) => {
+    const tones = {
+        blue: 'bg-blue-50 text-blue-600 border-blue-100',
+        emerald: 'bg-emerald-50 text-emerald-600 border-emerald-100',
+        amber: 'bg-amber-50 text-amber-600 border-amber-100',
+        violet: 'bg-violet-50 text-violet-600 border-violet-100'
+    };
+
+    return (
+        <Card className="shadow-sm">
+            <div className="flex items-center justify-between gap-4">
+                <div>
+                    <p className="text-[11px] font-black uppercase tracking-wider text-slate-400">{label}</p>
+                    <p className="mt-2 text-2xl font-black text-slate-900">{value}</p>
+                </div>
+                <div className={`flex h-12 w-12 items-center justify-center rounded-2xl border ${tones[tone] || tones.blue}`}>
+                    {React.createElement(icon, { size: 22 })}
+                </div>
+            </div>
+        </Card>
+    );
+};
 
 const Dashboard = () => {
+    const { user } = useAuth();
     const [exams, setExams] = useState([]);
     const [assignments, setAssignments] = useState([]);
     const [policy, setPolicy] = useState([]);
@@ -32,11 +71,11 @@ const Dashboard = () => {
                     getGradingPolicy(),
                     getTeacherAssignments()
                 ]);
-                setExams(examsData.data);
-                setPolicy(policyData.data || []);
-                setAssignments(assignmentsData.data || []);
+                setExams(asArray(examsData));
+                setPolicy(asArray(policyData));
+                setAssignments(asArray(assignmentsData));
             } catch (err) {
-                console.error(err);
+                console.error('Failed to load teacher dashboard:', err);
             } finally {
                 setLoading(false);
             }
@@ -44,300 +83,242 @@ const Dashboard = () => {
         fetchData();
     }, []);
 
-    if (loading) return (
-        <div className="min-h-[60vh] flex flex-col items-center justify-center space-y-4">
-            <Spinner size="lg" />
-            <p className="text-slate-400 font-black animate-pulse uppercase tracking-widest text-xs">Syncing Teacher Portal...</p>
-        </div>
-    );
+    const groupedAssignments = useMemo(() => assignments.reduce((acc, item) => {
+        const classId = getId(item.classId);
+        const sectionId = getId(item.sectionId) || 'no-section';
+        const key = `${classId}-${sectionId}`;
 
-    // Grouping assignments by Class/Section for a better view
-    const groupedAssignments = assignments.reduce((acc, curr) => {
-        const key = `${curr.classId?._id}-${curr.sectionId?._id || 'no-section'}`;
+        if (!classId) return acc;
         if (!acc[key]) {
             acc[key] = {
-                class: curr.classId,
-                section: curr.sectionId,
+                class: item.classId,
+                section: item.sectionId,
                 subjects: []
             };
         }
-        acc[key].subjects.push(curr.subjectId);
-        return acc;
-    }, {});
 
-    const stats = [
-        { 
-            label: 'Active Exams', 
-            value: exams.length, 
-            icon: <BookOpen />, 
-            color: 'from-[var(--primary)] to-[var(--primary-dark)]',
-            bg: 'bg-[var(--primary)]/5'
-        },
-        { 
-            label: 'Assigned Classes', 
-            value: Object.keys(groupedAssignments).length, 
-            icon: <Layout />, 
-            color: 'from-[var(--secondary)] to-[var(--secondary)]/80',
-            bg: 'bg-[var(--secondary)]/5'
-        },
-        { 
-            label: 'Total Subjects', 
-            value: assignments.length, 
-            icon: <Target />, 
-            color: 'from-[var(--primary)]/90 to-[var(--secondary)]/90',
-            bg: 'bg-[var(--primary)]/5'
-        },
-        { 
-            label: 'Performance', 
-            value: 'Elite', 
-            icon: <Award />, 
-            color: 'from-[var(--secondary)] to-[var(--primary)]',
-            bg: 'bg-[var(--secondary)]/5'
-        },
-    ];
+        if (item.subjectId) acc[key].subjects.push(item.subjectId);
+        return acc;
+    }, {}), [assignments]);
+
+    const assignmentGroups = Object.values(groupedAssignments);
+    const uniqueSubjectCount = new Set(assignments.map((item) => getId(item.subjectId)).filter(Boolean)).size;
+    const openExams = exams.filter((exam) => String(exam.status || '').toUpperCase() === 'OPEN');
+    const recentExams = exams.slice(0, 5);
+    const sortedPolicy = [...policy].sort((a, b) => Number(b.min || 0) - Number(a.min || 0));
+
+    if (loading) {
+        return (
+            <div className="flex min-h-[60vh] flex-col items-center justify-center gap-3">
+                <Spinner size="lg" />
+                <p className="text-xs font-black uppercase tracking-widest text-slate-400">Loading teacher workspace...</p>
+            </div>
+        );
+    }
 
     return (
-        <div className="max-w-[1600px] mx-auto space-y-12 animate-fade-in pb-20">
-            {/* Hero Section */}
-            <div className="relative group overflow-hidden bg-[#0F172A] rounded-[3rem] p-12 text-white shadow-2xl shadow-[var(--primary)]/5 border border-white/5">
-                <div className="relative z-10 flex flex-col xl:flex-row justify-between items-center gap-10">
-                    <div className="space-y-6 text-center xl:text-left">
-                        <div className="flex flex-wrap justify-center xl:justify-start gap-3">
-                            <Badge variant="success" className="bg-emerald-500/10 text-emerald-400 border-emerald-500/20 px-5 py-2 rounded-full font-bold">
-                                Academic Year 2023/24
+        <div className="space-y-6 pb-10">
+            <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+                <div className="grid gap-6 p-5 md:grid-cols-[1fr_auto] md:p-6">
+                    <div className="max-w-3xl">
+                        <div className="mb-4 flex flex-wrap gap-2">
+                            <Badge variant="primary" className="rounded-lg">
+                                <GraduationCap size={13} />
+                                Teacher Portal
                             </Badge>
-                            <Badge className="bg-[var(--primary)]/10 text-[var(--primary)] border-[var(--primary)]/25 px-5 py-2 rounded-full font-bold">
-                                Branch: HQ Main
+                            <Badge variant="outline" className="rounded-lg">
+                                <Clock size={13} />
+                                {new Date().toLocaleDateString()}
                             </Badge>
                         </div>
-                        <div>
-                            <h1 className="text-6xl font-black tracking-tight leading-[1.1]">
-                                Hello, <span className="text-transparent bg-clip-text bg-linear-to-r from-[var(--primary)] to-[var(--secondary)]">Educator</span>
-                            </h1>
-                            <p className="text-slate-400 text-xl mt-4 font-medium max-w-2xl">
-                                Your educational ecosystem is ready. Manage curriculums, evaluate progress, and inspire excellence.
-                            </p>
-                        </div>
+                        <h1 className="text-2xl font-black tracking-tight text-slate-900 md:text-3xl">
+                            Welcome back, {user?.name || 'Teacher'}
+                        </h1>
+                        <p className="mt-2 max-w-2xl text-sm font-medium leading-6 text-slate-500">
+                            Review assigned classes, open exams, result entry tasks, and the grading policy from one clean workspace.
+                        </p>
                     </div>
-                    <div className="flex flex-col sm:flex-row gap-4">
+
+                    <div className="flex flex-col gap-3 sm:flex-row md:items-center">
                         <Link to="/teacher/results-entry">
-                            <Button size="lg" className="h-16 px-10 rounded-2xl bg-blue-600 hover:bg-blue-500 font-bold text-lg shadow-xl shadow-blue-500/20 transition-all active:scale-95">
-                                <PlusCircle className="mr-3" /> Result Entry
+                            <Button className="w-full sm:w-auto">
+                                <PenLine size={17} />
+                                Enter Results
                             </Button>
                         </Link>
-                        <Link to="/teacher/attendance">
-                            <Button size="lg" variant="outline" className="h-16 px-10 rounded-2xl border-white/10 hover:bg-white/5 font-bold text-lg text-white">
-                                <Clock className="mr-3" /> Attendance
+                        <Link to="/teacher/schedule">
+                            <Button variant="outline" className="w-full sm:w-auto">
+                                <Calendar size={17} />
+                                My Schedule
                             </Button>
                         </Link>
                     </div>
                 </div>
-                {/* Visual Flair */}
-                <div className="absolute top-0 right-0 w-[500px] h-[500px] bg-[var(--primary)]/10 rounded-full blur-[120px] -mr-64 -mt-64 group-hover:bg-[var(--primary)]/20 transition-all duration-700"></div>
-                <div className="absolute bottom-0 left-0 w-[300px] h-[300px] bg-[var(--primary)]/10 rounded-full blur-[80px] -ml-32 -mb-32"></div>
-            </div>
+            </section>
 
-            {/* Metrics */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8">
-                {stats.map((stat, i) => (
-                    <div key={i} className="group overflow-hidden bg-white p-8 rounded-[2.5rem] border border-slate-100 shadow-sm hover:shadow-2xl hover:shadow-slate-200/50 transition-all duration-500">
-                        <div className="flex justify-between items-start mb-6">
-                            <div className={`w-16 h-16 rounded-2xl ${stat.bg} flex items-center justify-center group-hover:rotate-6 transition-transform duration-500`}>
-                                <div className={`text-transparent bg-clip-text bg-linear-to-br ${stat.color}`}>
-                                    {React.cloneElement(stat.icon, { size: 32 })}
-                                </div>
+            <section className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+                <StatCard label="Open Exams" value={openExams.length} icon={BookOpen} tone="blue" />
+                <StatCard label="Assigned Classes" value={assignmentGroups.length} icon={LayoutDashboard} tone="emerald" />
+                <StatCard label="Subjects" value={uniqueSubjectCount} icon={Target} tone="violet" />
+                <StatCard label="Grade Rules" value={sortedPolicy.length} icon={Award} tone="amber" />
+            </section>
+
+            <section className="grid grid-cols-1 gap-6 xl:grid-cols-3">
+                <div className="space-y-6 xl:col-span-2">
+                    <Card
+                        title="My Teaching Assignments"
+                        headerAction={<Badge variant="outline">{assignmentGroups.length} classes</Badge>}
+                    >
+                        {assignmentGroups.length === 0 ? (
+                            <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-10 text-center">
+                                <Users size={36} className="mx-auto mb-3 text-slate-300" />
+                                <p className="font-bold text-slate-700">No assignments yet</p>
+                                <p className="mt-1 text-sm text-slate-500">Ask the branch admin to assign your classes and subjects.</p>
                             </div>
-                            <Activity size={20} className="text-slate-100 group-hover:text-slate-200 transition-colors" />
-                        </div>
-                        <div>
-                            <p className="text-xs font-black text-slate-400 uppercase tracking-[0.2em] mb-2">{stat.label}</p>
-                            <p className="text-5xl font-black text-[#0F172A] tracking-tighter tabular-nums">{stat.value}</p>
-                        </div>
-                    </div>
-                ))}
-            </div>
-
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-10">
-                {/* Main Content Areas */}
-                <div className="lg:col-span-8 space-y-12">
-                    {/* Assignments Header */}
-                    <section className="space-y-8">
-                        <div className="flex items-center justify-between px-2">
-                            <div className="space-y-1">
-                                <h2 className="text-3xl font-black text-slate-900 tracking-tight flex items-center gap-4">
-                                    <div className="w-12 h-12 bg-[var(--primary)] rounded-[18px] flex items-center justify-center text-white shadow-lg shadow-[var(--primary)]/20">
-                                        <Grid size={24} />
-                                    </div>
-                                    My Assignments
-                                </h2>
-                                <p className="text-slate-500 font-medium ml-16 italic">Personalized teaching schedule and subjects</p>
-                            </div>
-                        </div>
-
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                            {Object.values(groupedAssignments).map((group, idx) => (
-                                <Card key={idx} className="group relative border-2 border-slate-50 hover:border-[var(--primary)]/20 shadow-xl shadow-slate-200/20 p-0 rounded-[2.5rem] overflow-hidden transition-all duration-500 hover:-translate-y-2">
-                                    <div className="p-10 space-y-8">
-                                        <div className="flex justify-between items-start">
-                                            <div className="space-y-2">
-                                                <h3 className="text-4xl font-black text-slate-900 tracking-tighter leading-none">
-                                                    {group.class?.name}
-                                                </h3>
-                                                {group.section && (
-                                                    <Badge className="bg-[var(--primary)] text-white border-0 px-4 py-1.5 rounded-full text-sm font-bold shadow-md">
-                                                        Section: {group.section.name}
-                                                    </Badge>
+                        ) : (
+                            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+                                {assignmentGroups.map((group, index) => (
+                                    <div key={`${getId(group.class)}-${getId(group.section) || index}`} className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4 transition hover:border-[var(--primary)]/40 hover:bg-white">
+                                        <div className="flex items-start justify-between gap-3">
+                                            <div>
+                                                <p className="text-[11px] font-black uppercase tracking-wider text-slate-400">Class</p>
+                                                <h3 className="mt-1 text-lg font-black text-slate-900">{group.class?.name || 'Unnamed Class'}</h3>
+                                                {group.section?.name && (
+                                                    <p className="mt-1 text-sm font-semibold text-slate-500">Section {group.section.name}</p>
                                                 )}
                                             </div>
-                                            <div className="w-16 h-16 bg-slate-50 rounded-2xl flex items-center justify-center text-slate-200 group-hover:text-[var(--primary)] group-hover:bg-[var(--primary)]/10 transition-all duration-500">
-                                                <Layout size={28} />
+                                            <div className="rounded-xl bg-white p-2 text-[var(--primary)] shadow-sm">
+                                                <ClipboardList size={20} />
                                             </div>
                                         </div>
 
-                                        <div className="space-y-4">
-                                            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Authorized Subjects</p>
+                                        <div className="mt-4">
+                                            <p className="mb-2 text-[11px] font-black uppercase tracking-wider text-slate-400">Subjects</p>
                                             <div className="flex flex-wrap gap-2">
-                                                {group.subjects.map((sub, sIdx) => (
-                                                    <div key={sIdx} className="group/btn relative px-4 py-2 bg-slate-50 hover:bg-white border border-transparent hover:border-[var(--primary)]/20 rounded-xl transition-all cursor-default flex items-center gap-2">
-                                                        <span className="w-1.5 h-1.5 bg-[var(--primary)] rounded-full"></span>
-                                                        <span className="text-sm font-bold text-slate-700">{sub?.name}</span>
-                                                    </div>
+                                                {group.subjects.length === 0 ? (
+                                                    <Badge variant="outline">No subjects</Badge>
+                                                ) : group.subjects.map((subject, subjectIndex) => (
+                                                    <Badge key={`${getId(subject)}-${subjectIndex}`} variant="default" className="rounded-lg">
+                                                        {subject?.name || 'Subject'}
+                                                    </Badge>
                                                 ))}
                                             </div>
                                         </div>
 
-                                        <div className="pt-8 border-t border-slate-50 flex justify-between items-center">
-                                            <Button variant="ghost" size="sm" className="text-[10px] font-black uppercase text-[var(--primary)] tracking-widest hover:bg-[var(--primary)]/10 px-4">
-                                                Resources
-                                            </Button>
-                                            <div className="flex gap-2">
-                                                <Link to={`/teacher/attendance?classId=${group.class?._id}`}>
-                                                    <Button size="sm" className="bg-slate-900 hover:bg-slate-800 rounded-xl px-5 text-xs font-bold">Attendance</Button>
-                                                </Link>
-                                                <Link to={`/teacher/results-entry?classId=${group.class?._id}`}>
-                                                    <Button size="sm" className="bg-[var(--primary)] hover:bg-[var(--primary-dark)] rounded-xl px-5 text-xs font-bold">Grades</Button>
-                                                </Link>
-                                            </div>
+                                        <div className="mt-5 flex flex-wrap gap-2">
+                                            <Link to={`/teacher/attendance?classId=${getId(group.class)}`}>
+                                                <Button size="sm" variant="outline">
+                                                    Attendance
+                                                </Button>
+                                            </Link>
+                                            <Link to={`/teacher/results-entry?classId=${getId(group.class)}`}>
+                                                <Button size="sm">
+                                                    Enter Results
+                                                </Button>
+                                            </Link>
                                         </div>
                                     </div>
-                                </Card>
-                            ))}
-                            {assignments.length === 0 && (
-                                <div className="col-span-2 bg-slate-50/50 rounded-[3rem] border-2 border-dashed border-slate-200 py-32 text-center">
-                                    <Target size={64} className="mx-auto text-slate-200 mb-6" />
-                                    <h4 className="text-slate-400 font-black uppercase tracking-widest mb-2">Awaiting Assignments</h4>
-                                    <p className="text-slate-400 text-sm">Contact management to link your subjects.</p>
-                                </div>
-                            )}
-                        </div>
-                    </section>
+                                ))}
+                            </div>
+                        )}
+                    </Card>
 
-                    {/* Latest Exams Section */}
-                    <section className="space-y-8">
-                        <div className="flex items-center justify-between px-2">
-                            <h2 className="text-3xl font-black text-slate-900 tracking-tight flex items-center gap-4">
-                                <div className="w-12 h-12 bg-blue-600 rounded-[18px] flex items-center justify-center text-white shadow-lg shadow-blue-200">
-                                    <BookOpen size={24} />
-                                </div>
-                                Active Examinations
-                            </h2>
-                            <Link to="/teacher/exams">
-                                <Button variant="ghost" size="sm" className="font-black text-xs uppercase tracking-widest text-blue-600 hover:bg-blue-50">Archives</Button>
+                    <Card
+                        title="Recent Exams"
+                        headerAction={(
+                            <Link to="/teacher/exams" className="inline-flex items-center gap-1 text-xs font-black uppercase tracking-wider text-[var(--primary)] hover:underline">
+                                View all <ArrowRight size={14} />
+                            </Link>
+                        )}
+                    >
+                        {recentExams.length === 0 ? (
+                            <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-8 text-center">
+                                <BookOpen size={34} className="mx-auto mb-3 text-slate-300" />
+                                <p className="font-bold text-slate-700">No exams published yet</p>
+                                <p className="mt-1 text-sm text-slate-500">Open exams will appear here when branch admin publishes them.</p>
+                            </div>
+                        ) : (
+                            <div className="divide-y divide-slate-100">
+                                {recentExams.map((exam) => {
+                                    const status = String(exam.status || 'DRAFT').toUpperCase();
+                                    const canEnter = status === 'OPEN' && exam.canEnter !== false;
+
+                                    return (
+                                        <div key={exam._id} className="flex flex-col gap-3 py-4 first:pt-0 last:pb-0 md:flex-row md:items-center md:justify-between">
+                                            <div className="min-w-0">
+                                                <div className="flex flex-wrap items-center gap-2">
+                                                    <h3 className="font-black text-slate-900">{exam.name || exam.examCategoryId?.name || 'Unnamed Exam'}</h3>
+                                                    <Badge variant={status === 'OPEN' ? 'success' : status === 'CLOSED' ? 'default' : 'warning'}>{status}</Badge>
+                                                </div>
+                                                <p className="mt-1 text-sm font-medium text-slate-500">
+                                                    {exam.subjectId?.name || 'Subject'} - {exam.classId?.name || 'Class'} - {formatDate(exam.createdAt)}
+                                                </p>
+                                            </div>
+                                            <Link to={canEnter ? `/teacher/results-entry/${exam._id}` : `/teacher/exams/${exam._id}`}>
+                                                <Button size="sm" variant={canEnter ? 'primary' : 'outline'}>
+                                                    {canEnter ? 'Enter Results' : 'Open Details'}
+                                                </Button>
+                                            </Link>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        )}
+                    </Card>
+                </div>
+
+                <div className="space-y-6">
+                    <Card
+                        title="Grading Policy"
+                        headerAction={(
+                            <Link to="/teacher/grading-policy" className="text-xs font-black uppercase tracking-wider text-[var(--primary)] hover:underline">
+                                Details
+                            </Link>
+                        )}
+                    >
+                        {sortedPolicy.length === 0 ? (
+                            <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-8 text-center">
+                                <FileSpreadsheet size={32} className="mx-auto mb-3 text-slate-300" />
+                                <p className="font-bold text-slate-700">No grading scale configured</p>
+                                <p className="mt-1 text-sm text-slate-500">Branch admin should configure grading rules.</p>
+                            </div>
+                        ) : (
+                            <div className="space-y-3">
+                                {sortedPolicy.slice(0, 6).map((rule, index) => (
+                                    <div key={`${rule.grade}-${index}`} className="flex items-center justify-between rounded-xl border border-slate-100 bg-slate-50 px-4 py-3">
+                                        <div>
+                                            <p className="text-sm font-black text-slate-900">{rule.min}% - {rule.max}%</p>
+                                            <p className="text-xs font-semibold text-slate-500">Score range</p>
+                                        </div>
+                                        <Badge variant={String(rule.grade).toUpperCase() === 'A' ? 'success' : String(rule.grade).toUpperCase() === 'F' ? 'danger' : 'primary'} className="min-w-12 justify-center rounded-lg">
+                                            {rule.grade}
+                                        </Badge>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </Card>
+
+                    <Card title="Quick Actions">
+                        <div className="space-y-3">
+                            <Link to="/teacher/results-entry" className="flex items-center justify-between rounded-xl border border-slate-100 bg-slate-50 px-4 py-3 transition hover:border-[var(--primary)]/30 hover:bg-white">
+                                <span className="font-bold text-slate-700">Enter exam scores</span>
+                                <PenLine size={18} className="text-[var(--primary)]" />
+                            </Link>
+                            <Link to="/teacher/attendance" className="flex items-center justify-between rounded-xl border border-slate-100 bg-slate-50 px-4 py-3 transition hover:border-[var(--primary)]/30 hover:bg-white">
+                                <span className="font-bold text-slate-700">Open attendance</span>
+                                <Calendar size={18} className="text-[var(--primary)]" />
+                            </Link>
+                            <Link to="/teacher/results" className="flex items-center justify-between rounded-xl border border-slate-100 bg-slate-50 px-4 py-3 transition hover:border-[var(--primary)]/30 hover:bg-white">
+                                <span className="font-bold text-slate-700">Review results</span>
+                                <FileSpreadsheet size={18} className="text-[var(--primary)]" />
                             </Link>
                         </div>
-                        
-                        <div className="grid grid-cols-1 gap-4">
-                            {exams.slice(0, 4).map((exam) => (
-                                <Link key={exam._id} to={`/teacher/exams/${exam._id}`}>
-                                    <Card className="p-0 border-0 shadow-xl shadow-slate-200/10 hover:shadow-2xl hover:shadow-slate-200/30 transition-all group overflow-hidden bg-white">
-                                        <div className="flex items-center h-28">
-                                            <div className="w-3 bg-blue-500 h-full group-hover:scale-y-110 transition-transform duration-500 origin-left"></div>
-                                            <div className="flex-1 px-8 py-6 flex items-center justify-between">
-                                                <div className="space-y-1">
-                                                    <h3 className="text-2xl font-black text-slate-800 tracking-tight group-hover:text-blue-600 transition-colors uppercase">{exam.name || exam.examCategoryId?.name || 'Unnamed Exam'}</h3>
-                                                    <div className="flex items-center gap-4">
-                                                        <Badge variant="blue" className="bg-blue-50 text-blue-600 border-0 px-3 py-0.5 rounded-lg text-[10px] uppercase font-black tracking-widest">{exam.term}</Badge>
-                                                        <span className="text-[10px] text-slate-400 font-black uppercase tracking-widest flex items-center gap-2">
-                                                            <Calendar size={14} className="text-slate-300" />
-                                                            {new Date(exam.createdAt).toLocaleDateString()}
-                                                        </span>
-                                                    </div>
-                                                </div>
-                                                <div className="w-14 h-14 rounded-2xl bg-slate-50 group-hover:bg-blue-600 flex items-center justify-center text-slate-300 group-hover:text-white transition-all duration-500 origin-right">
-                                                    <ChevronRight size={28} />
-                                                </div>
-                                            </div>
-                                        </div>
-                                    </Card>
-                                </Link>
-                            ))}
-                        </div>
-                    </section>
+                    </Card>
                 </div>
-
-                {/* Sidebar Section */}
-                <div className="lg:col-span-4 space-y-12">
-                    {/* Grading Scale */}
-                    <div className="space-y-8">
-                        <h2 className="text-2xl font-black text-slate-900 tracking-tight flex items-center gap-4 px-2">
-                            <div className="w-10 h-10 bg-amber-100 rounded-[14px] flex items-center justify-center text-amber-600 shadow-sm">
-                                <Award size={22} />
-                            </div>
-                            Grading Rule
-                        </h2>
-                        <Card className="border-0 shadow-2xl bg-[#0F172A] p-1 text-white rounded-[2.5rem]">
-                            <div className="p-8 space-y-6">
-                                {[...policy].sort((a,b) => b.min - a.min).map((rule, i) => rule.min ? (
-                                    <div key={i} className="group flex items-center justify-between p-4 rounded-3xl hover:bg-white/3 transition-colors border border-transparent hover:border-white/5">
-                                        <div className="space-y-1">
-                                            <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest block">Score Range</span>
-                                            <span className="text-xl font-bold text-white tracking-widest">{rule.min}% - {rule.max}%</span>
-                                        </div>
-                                        <div className="w-16 h-16 bg-linear-to-br from-[var(--primary)] to-[var(--primary-dark)] rounded-2xl flex items-center justify-center shadow-lg group-hover:scale-110 transition-transform">
-                                            <span className="text-3xl font-black text-white">{rule.grade}</span>
-                                        </div>
-                                    </div>
-                                ) : null)}
-                                <Link to="/teacher/grading-policy" className="block text-center text-[10px] font-black text-slate-500 hover:text-white transition-colors mt-8 uppercase tracking-[0.3em] bg-white/5 py-5 rounded-4xl hover:bg-white/10">
-                                    Full Grading Schema
-                                </Link>
-                            </div>
-                        </Card>
-                    </div>
-
-                    {/* Insights Widget */}
-                    <div className="relative overflow-hidden bg-white border border-slate-100 p-10 rounded-[3rem] shadow-xl shadow-slate-200/30">
-                        <div className="flex items-center gap-5 mb-8">
-                            <div className="w-14 h-14 bg-[var(--primary)]/10 rounded-2xl flex items-center justify-center text-[var(--primary)] shadow-md">
-                                <TrendingUp size={28} />
-                            </div>
-                            <h4 className="font-black text-2xl text-[#0F172A] tracking-tight">AI Analytics</h4>
-                        </div>
-                        <p className="text-slate-500 text-lg leading-relaxed font-medium">
-                            System analysis indicates students in <span className="text-[var(--primary)] font-bold">Grade 1-A</span> require focus in <span className="text-[var(--primary)] font-bold">Reading</span>.
-                        </p>
-                        <hr className="my-8 border-slate-50" />
-                        <div className="flex items-center justify-between">
-                            <div className="space-y-1">
-                                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Accuracy</p>
-                                <p className="text-xl font-black text-slate-800">98.2%</p>
-                            </div>
-                            <Button variant="ghost" className="rounded-xl font-black text-[var(--primary)] uppercase text-xs tracking-widest">Detail</Button>
-                        </div>
-                        {/* Decorative */}
-                        <div className="absolute top-0 right-0 w-32 h-32 bg-[var(--primary)]/10 rounded-full blur-2xl -mr-16 -mt-16 opacity-50"></div>
-                    </div>
-                </div>
-            </div>
+            </section>
         </div>
     );
 };
-
-// Simple internal helper for grid icon if missing from imports
-const Grid = ({ size }) => (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-        <rect x="3" y="3" width="7" height="7" /><rect x="14" y="3" width="7" height="7" /><rect x="14" y="14" width="7" height="7" /><rect x="3" y="14" width="7" height="7" />
-    </svg>
-);
 
 export default Dashboard;

@@ -40,12 +40,17 @@ const TenantDetails = () => {
     const { tenantId } = useParams();
     const navigate = useNavigate();
     const [tenant, setTenant] = useState(null);
+    const [plans, setPlans] = useState([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
 
     useEffect(() => {
-        platformService.getTenantDetails(tenantId)
-            .then(res => { setTenant(res.data); setError(''); })
+        Promise.all([platformService.getTenantDetails(tenantId), platformService.getPlans(false)])
+            .then(([tenantResponse, plansResponse]) => {
+                setTenant(tenantResponse.data);
+                setPlans(plansResponse.data || []);
+                setError('');
+            })
             .catch(err => { setTenant(null); setError(err.response?.data?.message || 'Failed to load tenant details.'); })
             .finally(() => setLoading(false));
     }, [tenantId]);
@@ -77,8 +82,49 @@ const TenantDetails = () => {
     const studentPct = tenant.usage?.maxStudents > 0
         ? ((tenant.usage?.students || 0) / tenant.usage.maxStudents) * 100 : 0;
 
-    const isActive = tenant.status === 'Active' || tenant.isActive;
-    const isPending = !tenant.isApproved && !tenant.isActive;
+    const normalizedStatus = String(tenant.status || (tenant.isApproved === false ? 'pending' : tenant.isActive ? 'active' : 'suspended')).toLowerCase();
+    const isActive = normalizedStatus === 'active';
+    const isPending = normalizedStatus === 'pending';
+
+    const refreshTenant = async () => {
+        const response = await platformService.getTenantDetails(tenantId);
+        setTenant(response.data);
+    };
+
+    const approve = async () => {
+        const reason = window.prompt('Optional approval reason:') || '';
+        if (!window.confirm('Approve this school and enable access?')) return;
+        await platformService.approveTenant(tenantId, reason.trim());
+        await refreshTenant();
+    };
+
+    const reject = async () => {
+        const reason = window.prompt('Enter the required rejection reason:');
+        if (!reason?.trim() || !window.confirm('Reject this registration?')) return;
+        await platformService.rejectTenant(tenantId, reason.trim());
+        await refreshTenant();
+    };
+
+    const toggleAccess = async () => {
+        if (isActive) {
+            const reason = window.prompt('Enter the required suspension reason:');
+            if (!reason?.trim() || !window.confirm('Suspend this school?')) return;
+            await platformService.suspendTenant(tenantId, reason.trim());
+        } else {
+            const reason = window.prompt('Optional reactivation reason:') || '';
+            if (!window.confirm('Reactivate this school?')) return;
+            await platformService.reactivateTenant(tenantId, reason.trim());
+        }
+        await refreshTenant();
+    };
+
+    const changePlan = async () => {
+        const choices = plans.map(plan => plan.slug).join(', ');
+        const plan = window.prompt(`Enter an active plan slug (${choices}):`, tenant.planSlug || '');
+        if (!plan || plan === tenant.planSlug) return;
+        await platformService.updateTenantPlan(tenantId, plan.trim().toLowerCase(), 'Changed from tenant details');
+        await refreshTenant();
+    };
 
     return (
         <div className="space-y-6">
@@ -116,7 +162,13 @@ const TenantDetails = () => {
                     >
                         <Mail size={15} /> Contact Admin
                     </button>
-                    <button className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold text-white hover:opacity-90 transition shadow-sm"
+                    {['active', 'suspended'].includes(normalizedStatus) && (
+                    <button onClick={toggleAccess} className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold text-white hover:opacity-90 transition shadow-sm"
+                        style={{ background: isActive ? '#e11d48' : '#059669' }}>
+                        {isActive ? 'Suspend' : 'Reactivate'}
+                    </button>
+                    )}
+                    <button onClick={changePlan} className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold text-white hover:opacity-90 transition shadow-sm"
                         style={{ background: NAVY }}>
                         Manage Plan
                     </button>
@@ -132,10 +184,14 @@ const TenantDetails = () => {
                         <p className="text-xs text-amber-600 font-medium">This school registered from the public portal and is awaiting platform approval.</p>
                     </div>
                     <button
-                        onClick={() => platformService.updateTenantStatus(tenantId, 'Active').then(() => window.location.reload())}
+                        onClick={approve}
                         className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-bold bg-emerald-600 text-white hover:bg-emerald-700 transition shadow-sm flex-shrink-0"
                     >
                         <CheckCircle2 size={15} /> Approve
+                    </button>
+                    <button onClick={reject}
+                        className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-bold bg-rose-600 text-white hover:bg-rose-700 transition shadow-sm flex-shrink-0">
+                        <XCircle size={15} /> Reject
                     </button>
                 </div>
             )}
@@ -238,7 +294,7 @@ const TenantDetails = () => {
                             <Activity size={16} style={{ color: BLUE }} /> Tenant Info
                         </h3>
                         {[
-                            { label: 'Status',       value: isPending ? 'Pending Approval' : (isActive ? 'Active' : 'Suspended'),
+                            { label: 'Status',       value: normalizedStatus.charAt(0).toUpperCase() + normalizedStatus.slice(1),
                               color: isPending ? 'text-amber-600' : isActive ? 'text-emerald-600' : 'text-rose-600' },
                             { label: 'Admin',        value: tenant.admin?.name || 'Not assigned', color: 'text-slate-800' },
                             { label: 'Admin Email',  value: tenant.admin?.email || '—',           color: 'text-slate-600' },
@@ -249,6 +305,20 @@ const TenantDetails = () => {
                                 <span className={`text-sm font-bold ${color}`}>{value}</span>
                             </div>
                         ))}
+                    </div>
+
+                    <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-5">
+                        <h3 className="font-extrabold text-slate-800 mb-4">Status History</h3>
+                        <div className="space-y-3">
+                            {(tenant.statusHistory || []).slice().reverse().map((entry, index) => (
+                                <div key={`${entry.changedAt}-${index}`} className="border-b border-slate-50 pb-3 last:border-0">
+                                    <p className="text-sm font-bold text-slate-700 capitalize">{entry.status}</p>
+                                    <p className="text-xs text-slate-500">{entry.reason || 'No reason provided'}</p>
+                                    <p className="text-[10px] text-slate-400">{entry.changedAt ? new Date(entry.changedAt).toLocaleString() : ''}</p>
+                                </div>
+                            ))}
+                            {(tenant.statusHistory || []).length === 0 && <p className="text-xs text-slate-400">No status history recorded yet.</p>}
+                        </div>
                     </div>
                 </div>
             </div>

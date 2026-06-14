@@ -20,12 +20,15 @@ const statusConfig = {
     Active:    { dot: 'bg-emerald-500', text: 'text-emerald-700', bg: 'bg-emerald-50 border-emerald-200', label: 'Active' },
     Suspended: { dot: 'bg-rose-500',    text: 'text-rose-700',    bg: 'bg-rose-50 border-rose-200',       label: 'Suspended' },
     Pending:   { dot: 'bg-amber-400',   text: 'text-amber-700',   bg: 'bg-amber-50 border-amber-200',     label: 'Pending' },
+    Rejected:  { dot: 'bg-slate-500',   text: 'text-slate-700',   bg: 'bg-slate-50 border-slate-200',     label: 'Rejected' },
 };
 
 const Tenants = () => {
     const [tenants, setTenants] = useState([]);
     const [loading, setLoading] = useState(true);
     const [search, setSearch] = useState('');
+    const [statusFilter, setStatusFilter] = useState('all');
+    const [planFilter, setPlanFilter] = useState('all');
     const [error, setError] = useState('');
     const navigate = useNavigate();
 
@@ -45,36 +48,61 @@ const Tenants = () => {
     };
 
     const handleToggleStatus = async (id, currentStatus) => {
-        const newStatus = currentStatus === 'Active' ? 'Suspended' : 'Active';
         try {
-            await platformService.updateTenantStatus(id, newStatus);
+            if (currentStatus === 'Active') {
+                const reason = window.prompt('Enter the required suspension reason:');
+                if (!reason?.trim() || !window.confirm('Suspend this school and block normal access?')) return;
+                await platformService.suspendTenant(id, reason.trim());
+            } else {
+                const reason = window.prompt('Optional reactivation reason:') || '';
+                if (!window.confirm('Reactivate this school?')) return;
+                await platformService.reactivateTenant(id, reason.trim());
+            }
             fetchTenants();
         } catch (err) {
-            console.error('Error updating status:', err);
+            setError(err.response?.data?.message || 'Could not update tenant status.');
         }
     };
 
     const handleApprove = async (id) => {
         try {
-            await platformService.updateTenantStatus(id, 'Active');
+            const reason = window.prompt('Optional approval reason:') || '';
+            if (!window.confirm('Approve this school and enable access?')) return;
+            await platformService.approveTenant(id, reason.trim());
             fetchTenants();
         } catch (err) {
-            console.error('Error approving tenant:', err);
+            setError(err.response?.data?.message || 'Could not approve tenant.');
         }
     };
 
-    const filteredTenants = tenants.filter(t => {
-        const hay = `${t.name} ${t.domain} ${t.plan}`.toLowerCase();
-        return hay.includes(search.trim().toLowerCase());
-    });
+    const handleReject = async (id) => {
+        const reason = window.prompt('Enter the required rejection reason:');
+        if (!reason?.trim() || !window.confirm('Reject this school registration?')) return;
+        try {
+            await platformService.rejectTenant(id, reason.trim());
+            fetchTenants();
+        } catch (err) {
+            setError(err.response?.data?.message || 'Could not reject tenant.');
+        }
+    };
 
     const getStatus = (tenant) => {
-        if (!tenant.isApproved && !tenant.isActive) return 'Pending';
+        if (tenant.status) return tenant.status.charAt(0).toUpperCase() + tenant.status.slice(1).toLowerCase();
+        if (!tenant.isApproved) return 'Pending';
         if (tenant.status) return tenant.status;
         return tenant.isActive ? 'Active' : 'Suspended';
     };
 
-    const pendingCount = tenants.filter(t => !t.isApproved && !t.isActive).length;
+    const filteredTenants = tenants.filter(t => {
+        const hay = `${t.name} ${t.domain} ${t.plan}`.toLowerCase();
+        const status = getStatus(t);
+        const matchesSearch = hay.includes(search.trim().toLowerCase());
+        const matchesStatus = statusFilter === 'all' || status.toLowerCase() === statusFilter;
+        const matchesPlan = planFilter === 'all' || String(t.planSlug || t.plan).toLowerCase() === planFilter;
+        return matchesSearch && matchesStatus && matchesPlan;
+    });
+
+    const pendingCount = tenants.filter(t => !t.isApproved).length;
 
     if (loading) return (
         <div className="flex items-center justify-center min-h-[400px]">
@@ -123,6 +151,21 @@ const Tenants = () => {
                         onChange={e => setSearch(e.target.value)}
                     />
                 </div>
+                <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}
+                    className="h-10 rounded-xl border border-slate-200 bg-slate-50 px-3 text-sm font-semibold text-slate-600">
+                    <option value="all">All statuses</option>
+                    <option value="pending">Pending</option>
+                    <option value="active">Active</option>
+                    <option value="suspended">Suspended</option>
+                    <option value="rejected">Rejected</option>
+                </select>
+                <select value={planFilter} onChange={e => setPlanFilter(e.target.value)}
+                    className="h-10 rounded-xl border border-slate-200 bg-slate-50 px-3 text-sm font-semibold text-slate-600">
+                    <option value="all">All plans</option>
+                    {[...new Set(tenants.map(t => String(t.planSlug || t.plan).toLowerCase()))].map(plan => (
+                        <option key={plan} value={plan}>{plan}</option>
+                    ))}
+                </select>
                 <p className="text-xs font-semibold text-slate-400 flex-shrink-0">
                     {filteredTenants.length} of {tenants.length} schools
                 </p>
@@ -185,13 +228,22 @@ const Tenants = () => {
                                         <td className="px-5 py-4">
                                             <div className="flex items-center justify-end gap-1.5">
                                                 {isPending && (
-                                                    <button
-                                                        onClick={() => handleApprove(tenant._id || tenant.id)}
-                                                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 transition"
-                                                        title="Approve School"
-                                                    >
-                                                        <CheckCircle2 size={13} /> Approve
-                                                    </button>
+                                                    <>
+                                                        <button
+                                                            onClick={() => handleApprove(tenant._id || tenant.id)}
+                                                            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 transition"
+                                                            title="Approve School"
+                                                        >
+                                                            <CheckCircle2 size={13} /> Approve
+                                                        </button>
+                                                        <button
+                                                            onClick={() => handleReject(tenant._id || tenant.id)}
+                                                            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-rose-50 text-rose-700 border border-rose-200 hover:bg-rose-100 transition"
+                                                            title="Reject School"
+                                                        >
+                                                            <XCircle size={13} /> Reject
+                                                        </button>
+                                                    </>
                                                 )}
                                                 <button
                                                     onClick={() => navigate(`/platform/tenants/${tenant._id || tenant.id}`)}
@@ -200,7 +252,7 @@ const Tenants = () => {
                                                 >
                                                     <Eye size={16} />
                                                 </button>
-                                                {!isPending && (
+                                                {!isPending && status !== 'Rejected' && (
                                                     <button
                                                         onClick={() => handleToggleStatus(tenant._id || tenant.id, status)}
                                                         className={`p-2 rounded-lg transition ${status === 'Active' ? 'text-slate-400 hover:text-rose-600 hover:bg-rose-50' : 'text-slate-400 hover:text-emerald-600 hover:bg-emerald-50'}`}

@@ -70,10 +70,19 @@ const InvoiceGenerate = () => {
         e.preventDefault();
         setLoading(true);
         try {
-            await generateInvoices({
-                ...formData,
-                type: mode // 'class' or 'student'
-            });
+            const payload = {
+                branchId: formData.branchId,
+                academicYearId: formData.academicYearId,
+                dueDate: formData.dueDate,
+                feeStructureId: formData.feeStructureId
+            };
+            if (mode === 'class') {
+                payload.classId = formData.targetId;
+            } else {
+                payload.studentId = formData.targetId;
+            }
+
+            await generateInvoices(payload);
             setSuccess(true);
         } catch (e) {
             console.error(e);
@@ -121,6 +130,7 @@ const InvoiceGenerate = () => {
 
             <div className="grid grid-cols-2 gap-4 mb-6">
                 <button 
+                    type="button"
                     onClick={() => setMode('class')}
                     className={`p-4 border rounded-xl flex items-center justify-center gap-3 transition-all ${mode === 'class' ? 'bg-[var(--primary)] text-white border-[var(--primary)] shadow-lg' : 'bg-white text-slate-500 hover:bg-slate-50'}`}
                 >
@@ -128,6 +138,7 @@ const InvoiceGenerate = () => {
                     <span className="font-bold">Bulk Class Invoice</span>
                 </button>
                 <button 
+                    type="button"
                     onClick={() => setMode('student')}
                     className={`p-4 border rounded-xl flex items-center justify-center gap-3 transition-all ${mode === 'student' ? 'bg-[var(--primary)] text-white border-[var(--primary)] shadow-lg' : 'bg-white text-slate-500 hover:bg-slate-50'}`}
                 >
@@ -202,5 +213,3 @@ const InvoiceGenerate = () => {
 };
 
 export default InvoiceGenerate;
-
-

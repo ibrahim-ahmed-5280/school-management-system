@@ -393,7 +393,7 @@ const processBulkResults = async (req, examId, results) => {
 
             const parentUser = await User.findOne({ students: row.studentId, tenantId: req.tenantId });
             if (parentUser) {
-                const student = await Student.findById(row.studentId);
+                const student = await Student.findOne({ _id: row.studentId, tenantId: req.tenantId, branchId: req.branchId });
                 const studentName = student ? `${student.firstName} ${student.lastName}` : 'Your child';
                 await createNotification({
                     tenantId: req.tenantId,
@@ -448,7 +448,7 @@ exports.updateResult = async (req, res) => {
             isAbsent,
             remarks
         }]);
-        const updated = await Result.findById(result._id);
+        const updated = await Result.findOne({ _id: result._id, tenantId: req.tenantId, branchId: req.branchId });
         sendResponse(res, true, updated, 'Result updated successfully');
     } catch (error) {
         sendError(res, error.status || 500, error.message);
@@ -625,11 +625,22 @@ exports.getResultsSummary = async (req, res) => {
 
         const stats = await Result.aggregate([
             { $match: match },
+            { $project: {
+                marksObtained: 1,
+                maxScore: 1,
+                status: 1,
+                percentage: { 
+                    $ifNull: [ 
+                        '$percentage', 
+                        { $cond: [ { $gt: [ '$maxScore', 0 ] }, { $multiply: [ { $divide: [ '$marksObtained', '$maxScore' ] }, 100 ] }, 0 ] } 
+                    ] 
+                }
+            }},
             { $group: {
                 _id: '$examId',
-                avgTotal: { $avg: '$total' },
-                maxTotal: { $max: '$total' },
-                minTotal: { $min: '$total' },
+                avgPercentage: { $avg: '$percentage' },
+                maxPercentage: { $max: '$percentage' },
+                minPercentage: { $min: '$percentage' },
                 count: { $sum: 1 },
                 passCount: { $sum: { $cond: [{ $eq: ['$status', 'PASS'] }, 1, 0] } }
             }}
@@ -639,11 +650,11 @@ exports.getResultsSummary = async (req, res) => {
 
         const result = stats[0];
         const summary = {
-            averageScore: Math.round(result.avgTotal * 10) / 10,
-            highestScore: result.maxTotal,
-            lowestScore: result.minTotal,
-            totalStudents: result.count,
-            passRate: Math.round((result.passCount / result.count) * 100) + '%'
+            averageScore: result ? Math.round((result.avgPercentage || 0) * 10) / 10 : 0,
+            highestScore: result ? Math.round((result.maxPercentage || 0) * 10) / 10 : 0,
+            lowestScore: result ? Math.round((result.minPercentage || 0) * 10) / 10 : 0,
+            totalStudents: result ? result.count : 0,
+            passRate: (result && result.count > 0) ? Math.round((result.passCount / result.count) * 100) + '%' : '0%'
         };
 
         sendResponse(res, true, summary);
@@ -651,6 +662,7 @@ exports.getResultsSummary = async (req, res) => {
         sendError(res, 500, error.message);
     }
 };
+
 
 // --- D) Exports ---
 
@@ -782,7 +794,7 @@ exports.createAttendanceSession = async (req, res) => {
 
         sendResponse(res, true, newSession, 'Attendance session created');
     } catch (error) {
-        if (error.code === 11000) return sendError(res, 400, 'Session already exists for this slot');
+        if (error.code === 11000) return sendError(res, 409, 'Session already exists for this slot');
         sendError(res, 500, error.message);
     }
 };
@@ -857,17 +869,33 @@ exports.submitAttendanceRecords = async (req, res) => {
             status: r.status
         }));
 
-        await AttendanceRecord.bulkWrite(recordDocs.map((record) => ({
-            updateOne: {
-                filter: { sessionId: sessionDoc._id, studentId: record.studentId },
-                update: { $set: record },
-                upsert: true
+        // Fetch original records for rollback
+        const originalRecords = await AttendanceRecord.find({ sessionId: sessionDoc._id });
+
+        try {
+            await AttendanceRecord.bulkWrite(recordDocs.map((record) => ({
+                updateOne: {
+                    filter: { sessionId: sessionDoc._id, studentId: record.studentId },
+                    update: { $set: record },
+                    upsert: true
+                }
+            })));
+            await AttendanceRecord.deleteMany({
+                sessionId: sessionDoc._id,
+                studentId: { $nin: recordDocs.map((record) => record.studentId) }
+            });
+        } catch (dbError) {
+            // Rollback changes
+            await AttendanceRecord.deleteMany({ sessionId: sessionDoc._id });
+            if (originalRecords.length > 0) {
+                const recordsToRestore = originalRecords.map(doc => doc.toObject());
+                await AttendanceRecord.insertMany(recordsToRestore);
             }
-        })));
-        await AttendanceRecord.deleteMany({
-            sessionId: sessionDoc._id,
-            studentId: { $nin: recordDocs.map((record) => record.studentId) }
-        });
+            if (dbError.code === 11000) {
+                return sendError(res, 409, 'Duplicate attendance record detected');
+            }
+            throw dbError;
+        }
 
         for (const r of normalizedRecords) {
             if (r.status === 'ABSENT' || r.status === 'LATE') {
@@ -919,3 +947,65 @@ exports.submitAttendanceRecords = async (req, res) => {
         sendError(res, 500, error.message);
     }
 };
+
+// --- I) Self Profile & Password Change ---
+
+exports.getProfile = async (req, res) => {
+    try {
+        const user = await User.findById(req.user._id).select('-passwordHash');
+        if (!user) return sendError(res, 404, 'User profile not found');
+        sendResponse(res, true, user);
+    } catch (error) {
+        sendError(res, 500, error.message);
+    }
+};
+
+exports.updateProfile = async (req, res) => {
+    try {
+        const { phone, address, name } = req.body;
+        const user = await User.findById(req.user._id);
+        if (!user) return sendError(res, 404, 'User not found');
+
+        if (phone !== undefined) user.phone = phone;
+        if (address !== undefined) user.address = address;
+        if (name !== undefined && String(name).trim()) user.name = name;
+
+        await user.save();
+
+        const updated = user.toObject();
+        delete updated.passwordHash;
+
+        sendResponse(res, true, updated, 'Profile updated successfully');
+    } catch (error) {
+        sendError(res, 500, error.message);
+    }
+};
+
+exports.changePassword = async (req, res) => {
+    try {
+        const { currentPassword, newPassword } = req.body;
+        if (!currentPassword || !newPassword) {
+            return sendError(res, 400, 'Current password and new password are required');
+        }
+
+        if (String(newPassword).length < 8) {
+            return sendError(res, 400, 'New password must be at least 8 characters long');
+        }
+
+        const user = await User.findById(req.user._id);
+        if (!user) return sendError(res, 404, 'User not found');
+
+        const isMatch = await user.comparePassword(currentPassword);
+        if (!isMatch) {
+            return sendError(res, 400, 'Invalid current password');
+        }
+
+        user.passwordHash = newPassword;
+        await user.save();
+
+        sendResponse(res, true, null, 'Password changed successfully');
+    } catch (error) {
+        sendError(res, 500, error.message);
+    }
+};
+

@@ -1,9 +1,11 @@
 /* eslint-disable react-refresh/only-export-components */
-import React, { createContext, useState, useContext } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import {
-    unifiedLogin as apiUnifiedLogin,
+    financeLogin as apiFinanceLogin,
+    getMe as apiGetMe,
     platformLogin as apiPlatformLogin,
-    registerTenant as apiRegisterTenant
+    registerTenant as apiRegisterTenant,
+    unifiedLogin as apiUnifiedLogin
 } from '../services/api/auth.api';
 import { branchLogin as apiBranchLogin } from '../services/api/branchAuth.api';
 import { apiStudentLogin } from '../services/api/student.api';
@@ -13,20 +15,65 @@ const AuthContext = createContext();
 
 export const AuthProvider = ({ children }) => {
     const [user, setUser] = useState(() => getStoredUser());
-    const loading = false;
+    const [loading, setLoading] = useState(() => Boolean(getStoredUser()?.token));
 
-    const login = async (identifier, password, tenantDomain = '') => {
-        const data = await apiUnifiedLogin(identifier, password, tenantDomain);
+    const storeSession = useCallback((data) => {
         setUser(data);
         setStoredUser(data);
         return data;
+    }, []);
+
+    const refreshSession = useCallback(async ({ silent = false } = {}) => {
+        const current = getStoredUser();
+        if (!current?.token) {
+            setUser(null);
+            setLoading(false);
+            return null;
+        }
+
+        if (!silent) setLoading(true);
+
+        try {
+            const refreshed = await apiGetMe();
+            return storeSession({ ...current, ...refreshed, token: current.token });
+        } catch (error) {
+            if ([401, 403].includes(error.response?.status)) {
+                setUser(null);
+                clearStoredUser();
+            }
+            return null;
+        } finally {
+            setLoading(false);
+        }
+    }, [storeSession]);
+
+    useEffect(() => {
+        refreshSession();
+
+        const refreshSilently = () => refreshSession({ silent: true });
+        const onVisibilityChange = () => {
+            if (document.visibilityState === 'visible') refreshSilently();
+        };
+        const intervalId = window.setInterval(refreshSilently, 120000);
+
+        window.addEventListener('focus', refreshSilently);
+        document.addEventListener('visibilitychange', onVisibilityChange);
+
+        return () => {
+            window.clearInterval(intervalId);
+            window.removeEventListener('focus', refreshSilently);
+            document.removeEventListener('visibilitychange', onVisibilityChange);
+        };
+    }, [refreshSession]);
+
+    const login = async (identifier, password, tenantDomain = '') => {
+        const data = await apiUnifiedLogin(identifier, password, tenantDomain);
+        return storeSession(data);
     };
 
     const branchLogin = async (email, password) => {
         const data = await apiBranchLogin(email, password);
-        setUser(data);
-        setStoredUser(data);
-        return data;
+        return storeSession(data);
     };
 
     const registrarLogin = async (email, password) => {
@@ -34,19 +81,15 @@ export const AuthProvider = ({ children }) => {
         if (data.role !== 'registrar') {
             throw { response: { data: { message: 'Access Denied: Registrars only.' } } };
         }
-        setUser(data);
-        setStoredUser(data);
-        return data;
+        return storeSession(data);
     };
 
     const cashierLogin = async (email, password) => {
-        const data = await apiBranchLogin(email, password); // Use shared branch login
+        const data = await apiBranchLogin(email, password);
         if (data.role !== 'cashier') {
             throw { response: { data: { message: 'Access Denied: Cashiers only.' } } };
         }
-        setUser(data);
-        setStoredUser(data);
-        return data;
+        return storeSession(data);
     };
 
     const teacherLogin = async (email, password) => {
@@ -54,9 +97,7 @@ export const AuthProvider = ({ children }) => {
         if (data.role !== 'teacher') {
             throw { response: { data: { message: 'Access Denied: Teachers only.' } } };
         }
-        setUser(data);
-        setStoredUser(data);
-        return data;
+        return storeSession(data);
     };
 
     const studentLogin = async (studentCode, password) => {
@@ -64,34 +105,37 @@ export const AuthProvider = ({ children }) => {
         if (data.role !== 'student') {
             throw { response: { data: { message: 'Access Denied: Students only.' } } };
         }
-        setUser(data);
-        setStoredUser(data);
-        return data;
+        return storeSession(data);
     };
 
     const platformLogin = async (email, password) => {
         const data = await apiPlatformLogin(email, password);
-        setUser(data);
-        setStoredUser(data);
-        return data;
+        if (data.role !== 'platform_owner' || data.scope !== 'platform') {
+            throw { response: { data: { message: 'Access denied: platform owner account requires platform scope.' } } };
+        }
+        return storeSession(data);
+    };
+
+    const financeLogin = async (email, password, tenantDomain = '') => {
+        const data = await apiFinanceLogin(email, password, tenantDomain);
+        if (data.role !== 'finance_director' || data.scope !== 'tenant') {
+            throw { response: { data: { message: 'Access denied: finance director account required.' } } };
+        }
+        return storeSession(data);
     };
 
     const registerTenant = async (payload) => {
         const data = await apiRegisterTenant(payload);
-        // If pending approval, do NOT create a session — just return the data
-        if (!data.pending) {
-            setUser(data);
-            setStoredUser(data);
-        }
+        // Pending registrations do not create an authenticated session.
+        if (!data.pending) storeSession(data);
         return data;
     };
-
 
     const logout = () => {
         const role = String(user?.role || '').toLowerCase();
         setUser(null);
         clearStoredUser();
-        
+
         if (role === 'platform_owner') {
             window.location.href = '/platform/login';
         } else if (role === 'super_admin') {
@@ -112,20 +156,22 @@ export const AuthProvider = ({ children }) => {
     };
 
     return (
-        <AuthContext.Provider value={{ 
+        <AuthContext.Provider value={{
             token: user?.token || '',
-            user, 
-            loading, 
-            login, 
-            tenantLogin: login, 
+            user,
+            loading,
+            login,
+            tenantLogin: login,
             registerTenant,
-            branchLogin, 
+            branchLogin,
             platformLogin,
-            registrarLogin, 
-            cashierLogin, 
-            teacherLogin, 
-            studentLogin, 
-            logout 
+            financeLogin,
+            registrarLogin,
+            cashierLogin,
+            teacherLogin,
+            studentLogin,
+            refreshSession,
+            logout
         }}>
             {children}
         </AuthContext.Provider>

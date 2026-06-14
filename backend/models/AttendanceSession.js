@@ -12,7 +12,7 @@ const attendanceSessionSchema = new mongoose.Schema({
     createdAt: { type: Date, default: Date.now }
 });
 
-// Unique session per class, date, period, academicYear, branch
-attendanceSessionSchema.index({ branchId: 1, classId: 1, academicYearId: 1, date: 1, period: 1 }, { unique: true });
+// Unique session per tenant, branch, class, date, period, academicYear
+attendanceSessionSchema.index({ tenantId: 1, branchId: 1, classId: 1, academicYearId: 1, date: 1, period: 1 }, { unique: true });
 
 module.exports = mongoose.model('AttendanceSession', attendanceSessionSchema);

@@ -125,7 +125,7 @@ const Exams = () => {
                     <p className="text-slate-500">Try adjusting filters or wait for admin to publish exams.</p>
                 </div>
             ) : (
-                <Table headers={['Category', 'Template (100)', 'Subject', 'Class', 'Year', 'Term', 'Status', 'Action']}>
+                <Table headers={['Category', 'Template (Max)', 'Subject', 'Class', 'Year', 'Term', 'Status', 'Action']}>
                     {exams.map((exam) => {
                         const status = exam.status || 'DRAFT';
                         const canEnter = status === 'OPEN' && exam.canEnter !== false;
@@ -136,7 +136,7 @@ const Exams = () => {
                                 <td className="px-8 py-5 font-semibold text-slate-700">{exam.examCategoryId?.name || '—'}</td>
                                 <td className="px-8 py-5 text-slate-600">
                                     <div className="font-semibold">{exam.examTemplateId?.name || 'Standard'}</div>
-                                    <div className="text-xs text-slate-400">100</div>
+                                    <div className="text-xs text-slate-400">{exam.maxScore ?? exam.examTemplateId?.maxScore ?? '—'}</div>
                                 </td>
                                 <td className="px-8 py-5 text-slate-600">{exam.subjectId?.name || '—'}</td>
                                 <td className="px-8 py-5 text-slate-600">{exam.classId?.name || '—'}</td>

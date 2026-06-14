@@ -1,15 +1,19 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Calendar, CheckCircle2, XCircle, AlertCircle, AlertTriangle } from 'lucide-react';
+import { Calendar, CheckCircle2, XCircle, AlertCircle, AlertTriangle, RefreshCw } from 'lucide-react';
 import api from '../../services/api';
 
 const ParentStudentAttendance = () => {
     const [searchParams, setSearchParams] = useSearchParams();
     const [children, setChildren] = useState([]);
+    const [years, setYears] = useState([]);
+    const [selectedYearId, setSelectedYearId] = useState('');
     const [attendance, setAttendance] = useState([]);
+
     const [loadingChildren, setLoadingChildren] = useState(true);
     const [loadingAttendance, setLoadingAttendance] = useState(false);
-    
+    const [error, setError] = useState('');
+
     const activeStudentId = searchParams.get('studentId') || '';
 
     // Fetch children list first
@@ -22,9 +26,11 @@ const ParentStudentAttendance = () => {
                     if (!activeStudentId && res.data.data.length > 0) {
                         setSearchParams({ studentId: res.data.data[0].student._id });
                     }
+                } else {
+                    setError('Failed to retrieve children list.');
                 }
             } catch (err) {
-                console.error(err);
+                setError(err.response?.data?.message || 'Error loading student profiles.');
             } finally {
                 setLoadingChildren(false);
             }
@@ -32,26 +38,55 @@ const ParentStudentAttendance = () => {
         fetchChildren();
     }, [activeStudentId, setSearchParams]);
 
-    // Fetch attendance when activeStudentId changes
+    // Fetch academic years when activeStudentId changes
     useEffect(() => {
         if (!activeStudentId) return;
 
-        const fetchAttendance = async () => {
-            setLoadingAttendance(true);
+        const fetchYears = async () => {
+            setError('');
             try {
-                const res = await api.get(`/parent/students/${activeStudentId}/attendance`);
+                const res = await api.get(`/parent/students/${activeStudentId}/academic-years`);
                 if (res.data?.success) {
-                    setAttendance(res.data.data);
+                    const yearList = res.data.data || [];
+                    setYears(yearList);
+                    
+                    const currentYear = yearList.find(y => y.isCurrent) || yearList[0];
+                    if (currentYear) {
+                        setSelectedYearId(currentYear._id);
+                    } else {
+                        setSelectedYearId('');
+                    }
                 }
             } catch (err) {
-                console.error(err);
-            } finally {
-                setLoadingAttendance(false);
+                setError(err.response?.data?.message || 'Failed to load academic years.');
             }
         };
-
-        fetchAttendance();
+        fetchYears();
     }, [activeStudentId]);
+
+    // Fetch attendance when student or year changes
+    const fetchAttendance = useCallback(async () => {
+        if (!activeStudentId) return;
+        setLoadingAttendance(true);
+        setError('');
+        try {
+            const params = selectedYearId ? { schoolYearId: selectedYearId } : {};
+            const res = await api.get(`/parent/students/${activeStudentId}/attendance`, { params });
+            if (res.data?.success) {
+                setAttendance(res.data.data || []);
+            } else {
+                setError('Failed to retrieve attendance details.');
+            }
+        } catch (err) {
+            setError(err.response?.data?.message || 'Error loading attendance logs.');
+        } finally {
+            setLoadingAttendance(false);
+        }
+    }, [activeStudentId, selectedYearId]);
+
+    useEffect(() => {
+        fetchAttendance();
+    }, [fetchAttendance]);
 
     const activeChild = children.find(c => c.student._id === activeStudentId);
 
@@ -73,7 +108,7 @@ const ParentStudentAttendance = () => {
     return (
         <div className="space-y-10">
             {/* Header */}
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6">
                 <div>
                     <h1 className="text-4xl font-black text-slate-900 tracking-tight mb-2">
                         Attendance <span className="text-[var(--primary)]">Logs</span>
@@ -81,24 +116,63 @@ const ParentStudentAttendance = () => {
                     <p className="text-slate-500 font-bold">Monitor class attendance details and arrival timestamps.</p>
                 </div>
 
-                {/* Child Selector */}
-                {children.length > 1 && (
-                    <div className="flex items-center gap-3">
-                        <span className="text-xs font-black text-slate-400 uppercase tracking-widest">Select Student:</span>
-                        <select 
-                            value={activeStudentId} 
-                            onChange={(e) => setSearchParams({ studentId: e.target.value })}
-                            className="h-12 bg-white border border-slate-100 rounded-2xl px-4 font-bold text-slate-800 outline-none shadow-sm focus:ring-4 focus:ring-[var(--primary)]/5"
-                        >
-                            {children.map(c => (
-                                <option key={c.student._id} value={c.student._id}>
-                                    {c.student.firstName} {c.student.lastName}
-                                </option>
-                            ))}
-                        </select>
-                    </div>
-                )}
+                <div className="flex flex-wrap items-center gap-4">
+                    {/* Child Selector */}
+                    {children.length > 1 && (
+                        <div className="flex items-center gap-2">
+                            <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Student:</span>
+                            <select 
+                                value={activeStudentId} 
+                                onChange={(e) => {
+                                    setSearchParams({ studentId: e.target.value });
+                                    setYears([]);
+                                    setSelectedYearId('');
+                                    setAttendance([]);
+                                }}
+                                className="h-10 bg-white border border-slate-200 rounded-xl px-3 font-bold text-slate-800 outline-none shadow-sm focus:ring-4 focus:ring-[var(--primary)]/5 text-xs"
+                            >
+                                {children.map(c => (
+                                    <option key={c.student._id} value={c.student._id}>
+                                        {c.student.firstName} {c.student.lastName}
+                                    </option>
+                                ))}
+                            </select>
+                        </div>
+                    )}
+
+                    {/* Academic Year Selector */}
+                    {years.length > 0 && (
+                        <div className="flex items-center gap-2">
+                            <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Academic Year:</span>
+                            <select 
+                                value={selectedYearId} 
+                                onChange={(e) => setSelectedYearId(e.target.value)}
+                                className="h-10 bg-white border border-slate-200 rounded-xl px-3 font-bold text-slate-800 outline-none shadow-sm focus:ring-4 focus:ring-[var(--primary)]/5 text-xs"
+                            >
+                                {years.map(y => (
+                                    <option key={y._id} value={y._id}>
+                                        {y.name} {y.isCurrent ? '(Current)' : ''}
+                                    </option>
+                                ))}
+                            </select>
+                        </div>
+                    )}
+                </div>
             </div>
+
+            {error && (
+                <div className="p-4 rounded-xl bg-rose-50 border border-rose-100 flex items-center gap-3 text-rose-900">
+                    <AlertCircle className="text-rose-500 flex-shrink-0" size={20} />
+                    <div className="text-sm font-semibold flex-1">{error}</div>
+                    <button 
+                        onClick={fetchAttendance} 
+                        className="text-xs bg-rose-100 hover:bg-rose-200 text-rose-800 font-bold px-3 py-1.5 rounded-lg transition flex items-center gap-1.5"
+                    >
+                        <RefreshCw size={12} />
+                        Retry
+                    </button>
+                </div>
+            )}
 
             {/* Attendance display */}
             {!activeStudentId ? (
@@ -109,6 +183,11 @@ const ParentStudentAttendance = () => {
             ) : loadingAttendance ? (
                 <div className="h-64 flex items-center justify-center">
                     <div className="w-12 h-12 border-4 border-[var(--primary)] border-t-transparent rounded-full animate-spin"></div>
+                </div>
+            ) : years.length === 0 ? (
+                <div className="bg-white border border-slate-200 rounded-xl p-6 text-center max-w-md mx-auto shadow-sm">
+                    <AlertTriangle className="mx-auto text-amber-500 mb-4" size={36} />
+                    <p className="text-slate-500 text-sm font-semibold">No academic year records found for this child.</p>
                 </div>
             ) : (
                 <div className="space-y-6">
@@ -138,7 +217,7 @@ const ParentStudentAttendance = () => {
                             <Calendar className="mx-auto text-slate-300 mb-4" size={36} />
                             <h3 className="text-lg font-bold text-slate-805 mb-1">No Attendance Records</h3>
                             <p className="text-slate-500 text-sm">
-                                There are currently no marked attendance records for {activeChild?.student?.firstName || 'this student'}.
+                                There are currently no marked attendance records for {activeChild?.student?.firstName || 'this student'} in the selected academic year.
                             </p>
                         </div>
                     ) : (
@@ -148,7 +227,7 @@ const ParentStudentAttendance = () => {
                                     Attendance History for {activeChild?.student?.firstName} {activeChild?.student?.lastName}
                                 </h3>
                                 <p className="text-[10px] font-semibold text-slate-400 mt-0.5 uppercase tracking-wider">
-                                    Total Sessions Logged: {totalCount} | Current Term
+                                    Total Sessions Logged: {totalCount} | Selected Academic Year
                                 </p>
                             </div>
 

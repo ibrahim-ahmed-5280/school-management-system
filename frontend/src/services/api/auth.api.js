@@ -15,7 +15,16 @@ export const tenantLogin = async (email, password) => {
     const response = await http.post('/auth/login', { 
         email, 
         password,
-        requiredRoles: ['super_admin', 'finance_director']
+        requiredRoles: ['super_admin']
+    });
+    return response.data;
+};
+
+export const financeLogin = async (email, password, tenantDomain = '') => {
+    const response = await http.post('/auth/finance/login', {
+        email,
+        password,
+        ...(tenantDomain ? { tenantDomain } : {})
     });
     return response.data;
 };

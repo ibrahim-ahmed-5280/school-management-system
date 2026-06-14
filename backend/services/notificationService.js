@@ -23,7 +23,7 @@ const createNotification = async ({ tenantId, recipientId, title, message, type 
 
         // Automated Alert Engine: Send transactional email if recipient has configured email address
         try {
-            const recipientUser = await User.findById(recipientId).lean();
+            const recipientUser = await User.findOne({ _id: recipientId, tenantId }).lean();
             if (recipientUser && recipientUser.email) {
                 sendEmail({
                     to: recipientUser.email,

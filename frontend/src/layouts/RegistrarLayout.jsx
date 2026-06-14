@@ -3,6 +3,7 @@ import { Outlet, Navigate, NavLink } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useBranding } from '../context/BrandingContext';
 import { LayoutDashboard, UserPlus, Users, ArrowRightLeft, LogOut, Menu, X, User } from 'lucide-react';
+import { filterMenuByPermission } from '../utils/permissions';
 
 const RegistrarLayout = () => {
     const { user, loading, logout } = useAuth();
@@ -15,13 +16,13 @@ const RegistrarLayout = () => {
         return <Navigate to="/registrar/login" replace />;
     }
 
-    const menu = [
-        { path: '/registrar', name: 'Dashboard', icon: LayoutDashboard },
-        { path: '/registrar/admissions', name: 'New Admission', icon: UserPlus },
-        { path: '/registrar/students', name: 'Students Directory', icon: Users },
-        { path: '/registrar/enrollments/new', name: 'Re-Enrollment', icon: Users },
-        { path: '/registrar/transfers', name: 'Transfers', icon: ArrowRightLeft }
-    ];
+    const menu = filterMenuByPermission(user, [
+        { path: '/registrar', name: 'Dashboard', icon: LayoutDashboard, permission: 'registrar.dashboard.view' },
+        { path: '/registrar/admissions', name: 'New Admission', icon: UserPlus, permission: 'students.create' },
+        { path: '/registrar/students', name: 'Students Directory', icon: Users, permission: 'students.view' },
+        { path: '/registrar/enrollments/new', name: 'Re-Enrollment', icon: Users, permission: 'enrollments.create' },
+        { path: '/registrar/transfers', name: 'Transfers', icon: ArrowRightLeft, permission: 'transfers.branch.create' }
+    ]);
 
     return (
         <div className="dashboard-shell">

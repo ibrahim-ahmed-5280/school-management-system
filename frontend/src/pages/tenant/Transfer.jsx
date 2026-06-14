@@ -61,7 +61,7 @@ const Transfer = () => {
     }, [transferData.toBranchId]);
 
     const handleStudentSearch = async (event) => {
-        event.preventDefault();
+        if (event && event.preventDefault) event.preventDefault();
         if (!studentQuery.trim()) return;
         try {
             const response = await tenantService.searchStudents(studentQuery.trim());
@@ -124,7 +124,7 @@ const Transfer = () => {
                     <div className="bg-white rounded-xl border border-slate-200 p-6 shadow-sm space-y-6">
                         <div className="space-y-2">
                             <label className="text-xs font-semibold tracking-wider text-slate-500 uppercase ml-0.5">Student Registry Lookup</label>
-                            <form onSubmit={handleStudentSearch} className="relative group flex gap-2">
+                            <div className="relative group flex gap-2">
                                 <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-[var(--primary)] transition-colors" size={16} />
                                 <input 
                                     required
@@ -133,9 +133,15 @@ const Transfer = () => {
                                     className="w-full h-10 bg-slate-50 border border-slate-200 rounded-lg pl-10 pr-4 font-normal text-sm text-slate-900 outline-none focus:bg-white focus:border-[var(--primary)] focus:ring-2 focus:ring-[var(--primary)]/10 transition-all placeholder:text-slate-400"
                                     value={studentQuery}
                                     onChange={(e) => setStudentQuery(e.target.value)}
+                                    onKeyDown={(e) => {
+                                        if (e.key === 'Enter') {
+                                            e.preventDefault();
+                                            handleStudentSearch(e);
+                                        }
+                                    }}
                                 />
-                                <button type="submit" className="h-10 px-4 rounded-lg bg-slate-900 text-white text-xs font-bold">Search</button>
-                            </form>
+                                <button type="button" onClick={handleStudentSearch} className="h-10 px-4 rounded-lg bg-slate-900 text-white text-xs font-bold">Search</button>
+                            </div>
                             {students.length > 0 && !selectedStudent && (
                                 <div className="max-h-44 overflow-y-auto rounded-lg border border-slate-200">
                                     {students.map((student) => (

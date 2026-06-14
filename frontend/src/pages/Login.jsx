@@ -127,6 +127,13 @@ const Login = () => {
                         Register your school
                     </Link>
                 </p>
+
+                <Link
+                    to="/finance/login"
+                    className="flex h-10 items-center justify-center rounded-xl border border-emerald-200 bg-emerald-50 text-xs font-black uppercase tracking-wider text-emerald-700 transition hover:bg-emerald-100"
+                >
+                    Open Finance Director Portal
+                </Link>
             </form>
         </AuthLayout>
     );

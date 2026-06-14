@@ -13,7 +13,8 @@ const BLUE_LITE = '#e8f0fe';
 const EMPTY_SETTINGS = {
     platformName: '', officialWebsite: '',
     primaryColor: '#1b2a4a', secondaryColor: '#4477f5',
-    supportEmail: '', smtpHost: '', smtpPort: '', smtpUser: '',
+    supportEmail: '', contactPhone: '', defaultCurrency: 'USD', defaultPlan: 'basic',
+    isRegistrationEnabled: true, smtpHost: '', smtpPort: '', smtpUser: '',
     smtpPass: '', senderEmail: '',
 };
 
@@ -261,6 +262,10 @@ const Settings = () => {
                                 <InfoRow label="Platform Name"    value={settings.platformName} />
                                 <InfoRow label="Official Website" value={settings.officialWebsite} />
                                 <InfoRow label="Support Email"    value={settings.supportEmail} />
+                                <InfoRow label="Contact Phone"    value={settings.contactPhone} />
+                                <InfoRow label="Default Currency" value={settings.defaultCurrency} />
+                                <InfoRow label="Default Plan" value={settings.defaultPlan} />
+                                <InfoRow label="Public Registration" value={settings.isRegistrationEnabled === false ? 'Disabled' : 'Enabled'} />
                                 <div className="flex items-start gap-4 py-3.5 border-b border-slate-100">
                                     <span className="w-40 flex-shrink-0 text-[12px] font-extrabold uppercase tracking-wider text-slate-400 pt-0.5">
                                         Primary Colour
@@ -316,6 +321,28 @@ const Settings = () => {
                                     <Input icon={Mail} type="email" placeholder="support@madrasahub.com"
                                         value={settings.supportEmail || ''}
                                         onChange={e => set('supportEmail', e.target.value)} />
+                                </Field>
+                                <Field label="Contact Phone">
+                                    <Input type="text" placeholder="+1 555 0100"
+                                        value={settings.contactPhone || ''}
+                                        onChange={e => set('contactPhone', e.target.value)} />
+                                </Field>
+                                <Field label="Default Currency">
+                                    <Input type="text" placeholder="USD"
+                                        value={settings.defaultCurrency || ''}
+                                        onChange={e => set('defaultCurrency', e.target.value.toUpperCase())} />
+                                </Field>
+                                <Field label="Default Plan">
+                                    <Input type="text" placeholder="basic"
+                                        value={settings.defaultPlan || ''}
+                                        onChange={e => set('defaultPlan', e.target.value.toLowerCase())} />
+                                </Field>
+                                <Field label="Public Registration">
+                                    <label className="flex h-11 items-center gap-3 rounded-xl border border-slate-200 px-4 text-sm font-semibold text-slate-700">
+                                        <input type="checkbox" checked={settings.isRegistrationEnabled !== false}
+                                            onChange={e => set('isRegistrationEnabled', e.target.checked)} />
+                                        Allow schools to submit registrations
+                                    </label>
                                 </Field>
                                 <Field label="Primary Colour">
                                     <div className="flex items-center gap-3">

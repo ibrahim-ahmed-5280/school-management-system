@@ -11,15 +11,20 @@ const platformService = {
   getTenants: () => api.get('/platform/tenants'),
   createTenant: (data) => api.post('/platform/tenants', data),
   getTenantDetails: (id) => api.get(`/platform/tenants/${id}`),
-  updateTenantStatus: (id, status) => api.patch(`/platform/tenants/${id}/status`, { status }),
-  updateTenantPlan: (id, planId) => api.put(`/platform/tenants/${id}/plan`, { planId }),
+  updateTenantStatus: (id, status, reason = '') => api.patch(`/platform/tenants/${id}/status`, { status, reason }),
+  approveTenant: (id, approvalReason = '') => api.post(`/platform/tenants/${id}/approve`, { approvalReason }),
+  rejectTenant: (id, rejectionReason) => api.post(`/platform/tenants/${id}/reject`, { rejectionReason }),
+  suspendTenant: (id, suspensionReason) => api.post(`/platform/tenants/${id}/suspend`, { suspensionReason }),
+  reactivateTenant: (id, reactivationReason = '') => api.post(`/platform/tenants/${id}/reactivate`, { reactivationReason }),
+  updateTenantPlan: (id, planId, reason = '') => api.put(`/platform/tenants/${id}/plan`, { planId, reason }),
   
-  getPlans: () => api.get('/platform/plans'),
+  getPlans: (includeInactive = true) => api.get('/platform/plans', { params: { includeInactive } }),
   createPlan: (data) => api.post('/platform/plans', data),
   updatePlan: (id, data) => api.put(`/platform/plans/${id}`, data),
   deletePlan: (id) => api.delete(`/platform/plans/${id}`),
   
-  getAuditLogs: () => api.get('/platform/audit-logs'),
+  getAuditLogs: (params = {}) => api.get('/platform/audit-logs', { params }),
+  
   
   getSystemHealth: () => api.get('/platform/health'),
   
@@ -28,9 +33,9 @@ const platformService = {
   testEmail: (data) => api.post('/platform/settings/test-email', data),
 
   // ── Public endpoints (no auth required, for landing page) ──
-  getPublicStats: () => publicApi.get('/public/stats'),
+  getPublicStats: () => publicApi.get('/public/platform-stats'),
   getPublicPlans: () => publicApi.get('/public/plans'),
+  getPublicSettings: () => publicApi.get('/public/settings'),
 };
 
 export default platformService;
-

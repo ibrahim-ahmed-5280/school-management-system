@@ -40,3 +40,7 @@ export const getTransferBranchClasses = async (branchId) => {
 export const apiResetStudentPassword = async (id) => {
     return await http.put(`/registrar/students/${id}/reset-password`);
 };
+
+export const getRegistrarStats = async () => {
+    return await http.get('/registrar/stats');
+};

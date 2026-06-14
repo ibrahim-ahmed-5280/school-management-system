@@ -42,7 +42,7 @@ const AuditLogs = () => {
 
     useEffect(() => {
         platformService.getAuditLogs()
-            .then(res => { setLogs(res.data); setError(''); })
+            .then(res => { setLogs(res.data?.logs || res.data || []); setError(''); })
             .catch(err => { setLogs([]); setError(err.response?.data?.message || 'Failed to load audit logs.'); })
             .finally(() => setLoading(false));
     }, []);

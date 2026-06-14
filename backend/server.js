@@ -109,10 +109,11 @@ app.use((err, req, res, next) => {
     console.error(err.stack);
     const statusCode = err.message && err.message.startsWith('CORS blocked')
         ? 403
+        : err.statusCode
+            ? err.statusCode
         : (res.statusCode === 200 ? 500 : res.statusCode);
     res.status(statusCode).json({
-        message: err.message,
-        stack: process.env.NODE_ENV === 'production' ? null : err.stack,
+        message: err.message
     });
 });
 

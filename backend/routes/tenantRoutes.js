@@ -9,9 +9,11 @@ const {
     createAcademicYear, setCurrentYear,
     getOverviewReport,
     promoteStudents, transferStudentBranch,
-    getAuditLogs
+    getTenantAuditLogs,
+    getPermissionCatalog, getUserPermissions, updateUserPermissions
 } = require('../controllers/tenantController');
 const { protect, authorize, requireScope, tenantGuard } = require('../middleware/auth');
+const { requirePermission } = require('../middleware/permissions');
 const { authRateLimiter } = require('../middleware/rateLimiter');
 
 // Public tenant auth
@@ -28,8 +30,8 @@ router.get('/settings/branding', getBranding);
 router.get('/branches', getBranches);
 router.get('/branches/:branchId/classes', getBranchClasses);
 
-// Public lookup for any logged in tenant user (within scope)
-router.get('/academic-years', asyncHandler(async (req, res) => {
+// Public lookup for any logged in tenant user (within scope) - restricted to Super Admin / Finance Director
+router.get('/academic-years', authorize('super_admin', 'finance_director'), asyncHandler(async (req, res) => {
     if (!req.tenantId) return res.status(403).json({ message: 'Tenant context missing' });
     const AcademicYear = require('../models/AcademicYear');
     const years = await AcademicYear.find({ tenantId: req.tenantId });
@@ -56,6 +58,10 @@ router.post('/branches/:branchId/assign-branch-admin', assignBranchAdmin);
 router.get('/users', getUsers);
 router.post('/users', createUser);
 
+router.get('/permissions/catalog', requirePermission('tenant.users.permissions.view'), getPermissionCatalog);
+router.get('/users/:userId/permissions', requirePermission('tenant.users.permissions.view'), getUserPermissions);
+router.put('/users/:userId/permissions', requirePermission('tenant.users.permissions.update'), updateUserPermissions);
+
 // D) Academic Year
 router.post('/academic-years', createAcademicYear);
 router.patch('/academic-years/:yearId/set-current', setCurrentYear);
@@ -68,6 +74,7 @@ router.post('/enrollments/promote', promoteStudents);
 router.post('/enrollments/transfer-branch', transferStudentBranch);
 
 // G) Audit Logs
-router.get('/audit-logs', getAuditLogs);
+router.get('/audit', getTenantAuditLogs);
+router.get('/audit-logs', getTenantAuditLogs);
 
 module.exports = router;

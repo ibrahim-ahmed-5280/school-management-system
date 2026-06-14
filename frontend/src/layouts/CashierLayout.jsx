@@ -3,6 +3,7 @@ import { Outlet, Navigate, NavLink } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useBranding } from '../context/BrandingContext';
 import { LayoutDashboard, Receipt, FileText, History, LogOut, Menu, X, User } from 'lucide-react';
+import { filterMenuByPermission } from '../utils/permissions';
 
 const CashierLayout = () => {
     const { user, loading, logout } = useAuth();
@@ -15,12 +16,12 @@ const CashierLayout = () => {
         return <Navigate to="/cashier/login" replace />;
     }
 
-    const menu = [
-        { path: '/cashier', name: 'Dashboard', icon: LayoutDashboard },
-        { path: '/cashier/invoices', name: 'Invoice Lookup', icon: FileText },
-        { path: '/cashier/payments/new', name: 'Record Payment', icon: Receipt },
-        { path: '/cashier/payments', name: 'Payment History', icon: History }
-    ];
+    const menu = filterMenuByPermission(user, [
+        { path: '/cashier', name: 'Dashboard', icon: LayoutDashboard, permission: 'cashier.dashboard.view' },
+        { path: '/cashier/invoices', name: 'Invoice Lookup', icon: FileText, permission: 'cashier.invoices.search' },
+        { path: '/cashier/payments/new', name: 'Record Payment', icon: Receipt, permission: 'cashier.payments.create' },
+        { path: '/cashier/payments', name: 'Payment History', icon: History, permission: 'cashier.payments.view' }
+    ]);
 
     return (
         <div className="dashboard-shell">

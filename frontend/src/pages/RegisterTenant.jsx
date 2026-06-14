@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Lock, Mail, School, User, Eye, EyeOff, Clock, CheckCircle2, ArrowLeft, Mail as MailIcon } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import AuthLayout from '../components/auth/AuthLayout';
+import platformService from '../services/platformService';
 
 const NAVY      = '#1b2a4a';
 const BLUE      = '#4477f5';
@@ -14,13 +15,33 @@ const RegisterTenant = () => {
         domain: '',
         adminName: '',
         email: '',
-        password: ''
+        password: '',
+        plan: ''
     });
     const [showPassword, setShowPassword] = useState(false);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
     const [pendingData, setPendingData] = useState(null);
+    const [registrationEnabled, setRegistrationEnabled] = useState(true);
+    const [plans, setPlans] = useState([]);
+    const [checkingRegistration, setCheckingRegistration] = useState(true);
     const { registerTenant } = useAuth();
+
+    useEffect(() => {
+        Promise.all([platformService.getPublicSettings(), platformService.getPublicPlans()])
+            .then(([settingsResponse, plansResponse]) => {
+                const settings = settingsResponse.data || {};
+                const activePlans = plansResponse.data || [];
+                setRegistrationEnabled(settings.isRegistrationEnabled !== false);
+                setPlans(activePlans);
+                setFormData(current => ({
+                    ...current,
+                    plan: current.plan || settings.defaultPlan || activePlans[0]?.slug || ''
+                }));
+            })
+            .catch(() => setError('Could not load platform registration settings. Please try again.'))
+            .finally(() => setCheckingRegistration(false));
+    }, []);
 
     const handleChange = (e) => {
         setFormData({ ...formData, [e.target.name]: e.target.value });
@@ -114,6 +135,20 @@ const RegisterTenant = () => {
     }
 
     // ── Registration form ────────────────────────────────────
+    if (checkingRegistration) {
+        return <div className="min-h-screen flex items-center justify-center text-sm font-semibold text-slate-500">Checking registration availability...</div>;
+    }
+
+    if (!registrationEnabled) {
+        return (
+            <AuthLayout title="Registration Unavailable" subtitle="New school registration is currently disabled." backTo="/" backLabel="Back to Home">
+                <div className="rounded-xl border border-amber-200 bg-amber-50 px-5 py-4 text-sm font-semibold text-amber-800">
+                    School registration is currently disabled. Please contact platform support or try again later.
+                </div>
+            </AuthLayout>
+        );
+    }
+
     return (
         <AuthLayout
             title="Register Your School"
@@ -171,6 +206,20 @@ const RegisterTenant = () => {
                             value={formData.email} onChange={handleChange} required />
                     </div>
                 </label>
+
+                {plans.length > 0 && (
+                    <label className="block">
+                        <span className="mb-1.5 block text-[13px] font-semibold text-slate-700">Subscription Plan</span>
+                        <select name="plan" value={formData.plan} onChange={handleChange} required
+                            className="h-11 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 text-slate-800 text-sm outline-none transition-all focus:border-[#4477f5] focus:bg-white focus:ring-4 focus:ring-[#4477f5]/10">
+                            {plans.map(plan => (
+                                <option key={plan._id || plan.slug} value={plan.slug}>
+                                    {plan.name} - {typeof plan.price === 'number' ? `$${plan.price}/${plan.billingCycle || 'month'}` : plan.price}
+                                </option>
+                            ))}
+                        </select>
+                    </label>
+                )}
 
                 <label className="block">
                     <span className="mb-1.5 block text-[13px] font-semibold text-slate-700">Password</span>

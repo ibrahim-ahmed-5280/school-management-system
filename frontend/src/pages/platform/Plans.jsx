@@ -98,7 +98,7 @@ const Plans = () => {
   };
 
   const handleDelete = async (id) => {
-    if (window.confirm('Are you sure you want to delete this plan?')) {
+    if (window.confirm('Deactivate this plan? Existing tenants will keep their plan history, but it cannot be assigned again.')) {
       try {
         await platformService.deletePlan(id);
         fetchPlans();
@@ -132,7 +132,7 @@ const Plans = () => {
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {plans.map((plan) => (
-          <div key={plan._id} className="bg-white rounded-xl border border-slate-200 shadow-sm hover:shadow-md transition-all overflow-hidden flex flex-col group relative">
+          <div key={plan._id} className={`bg-white rounded-xl border border-slate-200 shadow-sm hover:shadow-md transition-all overflow-hidden flex flex-col group relative ${plan.isActive === false ? 'opacity-60' : ''}`}>
             <div className={`p-5 ${plan.bg}`}>
               <div className="flex justify-between items-start mb-3">
                 <div className={`${plan.color} group-hover:scale-105 transition-transform`}>
@@ -142,12 +142,15 @@ const Plans = () => {
                   <button onClick={() => handleOpenModal(plan)} className="p-1.5 bg-white/80 rounded-lg hover:bg-white transition shadow-sm text-slate-600">
                     <Settings2 size={14} />
                   </button>
-                  <button onClick={() => handleDelete(plan._id)} className="p-1.5 bg-white/80 rounded-lg hover:bg-red-50 hover:text-red-500 transition shadow-sm text-slate-600">
+                  <button disabled={plan.isActive === false} onClick={() => handleDelete(plan._id)} className="p-1.5 bg-white/80 rounded-lg hover:bg-red-50 hover:text-red-500 transition shadow-sm text-slate-600 disabled:opacity-30">
                     <Trash2 size={14} />
                   </button>
                 </div>
               </div>
               <h3 className="text-base font-black text-slate-800 tracking-tight">{plan.name}</h3>
+              <span className={`mt-2 inline-flex rounded-full px-2 py-0.5 text-[9px] font-black uppercase tracking-wider ${plan.isActive === false ? 'bg-slate-200 text-slate-600' : 'bg-emerald-100 text-emerald-700'}`}>
+                {plan.isActive === false ? 'Inactive' : 'Active'}
+              </span>
               <div className="mt-2 flex items-baseline gap-0.5">
                 <span className="text-2xl font-black text-slate-900 leading-none">
                   {typeof plan.price === 'number' ? `$${plan.price}` : plan.price}

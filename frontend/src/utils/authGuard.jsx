@@ -13,7 +13,7 @@ export const PlatformGuard = () => {
     );
   }
 
-  if (!user || user.role !== 'platform_owner') {
+  if (!user || user.role !== 'platform_owner' || user.scope !== 'platform') {
     return <Navigate to="/platform/login" replace />;
   }
 
@@ -25,7 +25,7 @@ export const PublicGuard = () => {
   
     if (loading) return null;
   
-    if (user && user.role === 'platform_owner') {
+    if (user && user.role === 'platform_owner' && user.scope === 'platform') {
       return <Navigate to="/platform" replace />;
     }
   
@@ -57,9 +57,7 @@ export const FinanceGuard = () => {
         </div>
     );
 
-    const allowedRoles = ['finance_director', 'super_admin'];
-
-    if (!user || !allowedRoles.includes(user.role) || user.scope !== 'tenant') {
+    if (!user || user.role !== 'finance_director' || user.scope !== 'tenant') {
         return <Navigate to="/finance/login" replace />;
     }
 

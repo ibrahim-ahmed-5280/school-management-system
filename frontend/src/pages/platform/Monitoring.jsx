@@ -91,6 +91,37 @@ const Monitoring = () => {
         </div>
       </div>
 
+      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-3">
+        {[
+          ['Tenants', health?.summary?.tenantCount],
+          ['Active', health?.summary?.activeTenants],
+          ['Pending', health?.summary?.pendingTenants],
+          ['Suspended', health?.summary?.suspendedTenants],
+          ['Branches', health?.summary?.totalBranches],
+          ['Users', health?.summary?.totalUsers],
+          ['Students', health?.summary?.totalStudents],
+          ['Active Plans', health?.summary?.activePlans],
+        ].map(([label, value]) => (
+          <div key={label} className="rounded-xl border border-slate-100 bg-white p-3 shadow-sm">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">{label}</p>
+            <p className="mt-1 text-lg font-black text-slate-800">{value ?? 0}</p>
+          </div>
+        ))}
+      </div>
+
+      {(health?.warnings || []).length > 0 && (
+        <div className="rounded-2xl border border-amber-200 bg-amber-50 p-5">
+          <h3 className="flex items-center gap-2 text-sm font-bold text-amber-800">
+            <AlertCircle size={16} /> Platform Warnings
+          </h3>
+          <div className="mt-3 space-y-2">
+            {health.warnings.map((warning) => (
+              <p key={warning} className="text-sm font-medium text-amber-700">{warning}</p>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         {services.map((service) => (
           <div key={service.name} className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm">

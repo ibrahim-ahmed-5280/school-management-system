@@ -10,7 +10,7 @@ const { createNotification } = require('./notificationService');
 /**
  * Service to handle bulk invoice generation logic
  */
-const generateBulkInvoices = async ({ tenantId, branchId, academicYearId, classId, studentId }) => {
+const generateBulkInvoices = async ({ tenantId, branchId, academicYearId, classId, studentId, dueDate }) => {
     const query = { tenantId, academicYearId };
     if (branchId) query.branchId = branchId;
     if (classId) query.classId = classId;
@@ -60,6 +60,7 @@ const generateBulkInvoices = async ({ tenantId, branchId, academicYearId, classI
                 items: feeStructure.feeItems,
                 totalAmount: feeStructure.totalAmount,
                 balance: feeStructure.totalAmount,
+                dueDate: dueDate ? new Date(dueDate) : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
                 status: 'UNPAID'
             });
 
@@ -78,7 +79,7 @@ const generateBulkInvoices = async ({ tenantId, branchId, academicYearId, classI
 
                 const parentUser = await User.findOne({ students: enrollment.studentId, tenantId });
                 if (parentUser) {
-                    const student = await Student.findById(enrollment.studentId);
+                    const student = await Student.findOne({ _id: enrollment.studentId, tenantId, branchId: enrollment.branchId });
                     const studentName = student ? `${student.firstName} ${student.lastName}` : 'Your child';
                     await createNotification({
                         tenantId,
@@ -144,24 +145,88 @@ const getRevenueReport = async ({ tenantId, branchId, academicYearId, groupBy })
                     totalBalance: { $sum: '$balance' },
                     count: { $sum: 1 }
                 }
+            },
+            {
+                $lookup: {
+                    from: 'classes',
+                    localField: '_id',
+                    foreignField: '_id',
+                    as: 'classDoc'
+                }
+            },
+            { $unwind: { path: '$classDoc', preserveNullAndEmptyArrays: true } },
+            {
+                $project: {
+                    totalRevenue: 1,
+                    totalPaid: 1,
+                    totalBalance: 1,
+                    count: 1,
+                    _id: { $ifNull: ['$classDoc.name', 'Unknown Class'] }
+                }
+            }
+        );
+    } else if (groupBy === 'year') {
+        pipeline.push(
+            {
+                $group: {
+                    _id: '$academicYearId',
+                    totalRevenue: { $sum: '$totalAmount' },
+                    totalPaid: { $sum: '$paidAmount' },
+                    totalBalance: { $sum: '$balance' },
+                    count: { $sum: 1 }
+                }
+            },
+            {
+                $lookup: {
+                    from: 'academicyears',
+                    localField: '_id',
+                    foreignField: '_id',
+                    as: 'yearDoc'
+                }
+            },
+            { $unwind: { path: '$yearDoc', preserveNullAndEmptyArrays: true } },
+            {
+                $project: {
+                    totalRevenue: 1,
+                    totalPaid: 1,
+                    totalBalance: 1,
+                    count: 1,
+                    _id: { $ifNull: ['$yearDoc.name', 'Unknown Year'] }
+                }
             }
         );
     } else {
-        let groupField = '$branchId';
-        if (groupBy === 'year') groupField = '$academicYearId';
-
-        pipeline.push({
-            $group: {
-                _id: groupField,
-                totalRevenue: { $sum: '$totalAmount' },
-                totalPaid: { $sum: '$paidAmount' },
-                totalBalance: { $sum: '$balance' },
-                count: { $sum: 1 }
+        pipeline.push(
+            {
+                $group: {
+                    _id: '$branchId',
+                    totalRevenue: { $sum: '$totalAmount' },
+                    totalPaid: { $sum: '$paidAmount' },
+                    totalBalance: { $sum: '$balance' },
+                    count: { $sum: 1 }
+                }
+            },
+            {
+                $lookup: {
+                    from: 'branches',
+                    localField: '_id',
+                    foreignField: '_id',
+                    as: 'branchDoc'
+                }
+            },
+            { $unwind: { path: '$branchDoc', preserveNullAndEmptyArrays: true } },
+            {
+                $project: {
+                    totalRevenue: 1,
+                    totalPaid: 1,
+                    totalBalance: 1,
+                    count: 1,
+                    _id: { $ifNull: ['$branchDoc.name', 'Unknown Branch'] }
+                }
             }
-        });
+        );
     }
 
-    // Optional: Populate the ID names if possible, or leave for controller
     return await Invoice.aggregate(pipeline);
 };
 

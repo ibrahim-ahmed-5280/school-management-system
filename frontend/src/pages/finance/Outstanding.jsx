@@ -27,7 +27,6 @@ const Outstanding = () => {
         setLoading(true);
         try {
             const res = await getOutstanding(filters);
-             // Expecting structure: { totalOutstanding: 999, count: 10, debtors: [{ studentName, balance, branchName }] }
             setData(res.data || res || { totalOutstanding: 0, count: 0, debtors: [] });
         } catch (e) {
             console.error(e);
@@ -85,12 +84,13 @@ const Outstanding = () => {
                 
                 <Card className="bg-blue-50 border-blue-100">
                     <div className="p-2">
-                        <h3 className="font-bold text-slate-700 text-lg mb-2">Collection Target</h3>
-                        <div className="w-full bg-slate-200 h-3 rounded-full overflow-hidden">
-                            <div className="bg-blue-500 h-full w-[0%]" style={{width: '65%'}}></div>
-                        </div>
-                         <p className="text-xs text-slate-500 mt-2 text-right">65% Collected (Mock)</p>
-                         <p className="text-sm text-slate-600 mt-4">Automated reminders are active for {data.count || 0} students.</p>
+                        <h3 className="font-bold text-slate-700 text-lg mb-2">Billing Operations</h3>
+                        <p className="text-sm text-slate-600">
+                            Automatic email alerts and due date reminders are enabled for all invoices.
+                        </p>
+                        <p className="text-sm font-medium text-slate-700 mt-4">
+                            Active outstanding invoice count: <strong>{data.count || 0}</strong>
+                        </p>
                     </div>
                 </Card>
             </div>
@@ -101,25 +101,27 @@ const Outstanding = () => {
                         <thead className="bg-slate-50 text-slate-500 font-bold uppercase text-xs">
                             <tr>
                                 <th className="px-4 py-3 text-left">Student</th>
+                                <th className="px-4 py-3 text-left">Adm No.</th>
                                 <th className="px-4 py-3 text-left">Branch</th>
+                                <th className="px-4 py-3 text-left">Class</th>
+                                <th className="px-4 py-3 text-left">Oldest Due Date</th>
                                 <th className="px-4 py-3 text-right">Balance Due</th>
-                                <th className="px-4 py-3 text-center">Status</th>
                             </tr>
                         </thead>
                         <tbody className="divide-y">
                             {data.debtors?.slice(0, 10).map((d, i) => (
                                 <tr key={i} className="hover:bg-slate-50">
                                     <td className="px-4 py-3 font-bold text-slate-800">{d.studentName}</td>
+                                    <td className="px-4 py-3 text-slate-600 font-mono">{d.admissionNumber || '-'}</td>
                                     <td className="px-4 py-3 text-slate-500">{d.branchName || '-'}</td>
+                                    <td className="px-4 py-3 text-slate-500">{d.className || '-'}</td>
+                                    <td className="px-4 py-3 text-slate-500 text-xs">{d.oldestDueDate ? new Date(d.oldestDueDate).toLocaleDateString() : '-'}</td>
                                     <td className="px-4 py-3 text-right font-mono font-bold text-rose-600">${(d.balance || 0).toLocaleString()}</td>
-                                    <td className="px-4 py-3 text-center">
-                                        <Badge variant="danger">Overdue</Badge>
-                                    </td>
                                 </tr>
                             ))}
                             {(!data.debtors || data.debtors.length === 0) && (
                                 <tr>
-                                    <td colSpan="4" className="px-4 py-8 text-center text-slate-400">No major debtors found</td>
+                                    <td colSpan="6" className="px-4 py-8 text-center text-slate-400">No major debtors found</td>
                                 </tr>
                             )}
                         </tbody>

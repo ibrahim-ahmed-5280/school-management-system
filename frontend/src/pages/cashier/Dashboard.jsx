@@ -1,12 +1,13 @@
 import React, { useEffect, useState } from 'react';
-import { getPayments } from '../../services/api/cashier.api';
+import { getDashboardStats } from '../../services/api/cashier.api';
 import { Card, Spinner } from '../../components/ui';
 import { useNavigate } from 'react-router-dom';
-import { Receipt, Clock, Search } from 'lucide-react';
+import { Receipt, Clock, Search, FileText } from 'lucide-react';
 
 const Dashboard = () => {
     const [recentPayments, setRecentPayments] = useState([]);
     const [todayTotal, setTodayTotal] = useState(0);
+    const [stats, setStats] = useState(null);
     const [loading, setLoading] = useState(true);
     const [quickSearch, setQuickSearch] = useState('');
     const navigate = useNavigate();
@@ -14,15 +15,11 @@ const Dashboard = () => {
     useEffect(() => {
         const init = async () => {
             try {
-                // Fetch today's payments
-                const today = new Date().toISOString().split('T')[0];
-                const res = await getPayments({ from: today, to: today });
-                
-                const payments = res.data || [];
-                setRecentPayments(payments.slice(0, 5));
-                const total = payments.reduce((sum, p) => sum + (p.amount || 0), 0);
-                setTodayTotal(total);
-
+                const res = await getDashboardStats();
+                const data = res.data || {};
+                setStats(data);
+                setRecentPayments(data.recentTransactions || []);
+                setTodayTotal(data.collectedToday || 0);
             } catch (err) {
                 console.error("Dashboard Load Error", err);
             } finally {
@@ -45,23 +42,55 @@ const Dashboard = () => {
         <div className="space-y-6">
             <h1 className="text-2xl font-bold text-slate-800">Cashier Dashboard</h1>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                  {/* Today's Stats */}
-                 <div className="bg-white p-6 rounded-xl border shadow-sm flex items-center justify-between">
-                    <div>
-                        <p className="text-sm text-slate-500 font-medium mb-1">Collected Today</p>
-                        <h3 className="text-3xl font-bold text-[var(--primary)]">${todayTotal.toLocaleString()}</h3>
-                    </div>
-                    <div className="h-12 w-12 rounded-lg flex items-center justify-center bg-[var(--primary)]/10 text-[var(--primary)]">
-                        <Clock size={24} />
-                    </div>
+                 <div className="lg:col-span-2 grid grid-cols-1 sm:grid-cols-2 gap-6">
+                      <div className="bg-white p-6 rounded-xl border shadow-sm flex items-center justify-between">
+                         <div>
+                             <p className="text-sm text-slate-500 font-medium mb-1">Collected Today</p>
+                             <h3 className="text-2xl font-bold text-green-600">${todayTotal.toLocaleString()}</h3>
+                         </div>
+                         <div className="h-12 w-12 rounded-lg flex items-center justify-center bg-green-50 text-green-600">
+                             <Clock size={24} />
+                         </div>
+                      </div>
+
+                      <div className="bg-white p-6 rounded-xl border shadow-sm flex items-center justify-between">
+                         <div>
+                             <p className="text-sm text-slate-500 font-medium mb-1">Transactions Today</p>
+                             <h3 className="text-2xl font-bold text-blue-600">{stats?.transactionCountToday || 0}</h3>
+                         </div>
+                         <div className="h-12 w-12 rounded-lg flex items-center justify-center bg-blue-50 text-blue-600">
+                             <Receipt size={24} />
+                         </div>
+                      </div>
+
+                      <div className="bg-white p-6 rounded-xl border shadow-sm flex items-center justify-between">
+                         <div>
+                             <p className="text-sm text-slate-500 font-medium mb-1">Pending Invoices</p>
+                             <h3 className="text-2xl font-bold text-amber-600">{stats?.pendingInvoicesCount || 0}</h3>
+                         </div>
+                         <div className="h-12 w-12 rounded-lg flex items-center justify-center bg-amber-50 text-amber-600">
+                             <FileText size={24} />
+                         </div>
+                      </div>
+
+                      <div className="bg-white p-6 rounded-xl border shadow-sm flex items-center justify-between">
+                         <div>
+                             <p className="text-sm text-slate-500 font-medium mb-1">Branch Outstanding Balance</p>
+                             <h3 className="text-2xl font-bold text-rose-600">${(stats?.totalOutstandingForBranch || 0).toLocaleString()}</h3>
+                         </div>
+                         <div className="h-12 w-12 rounded-lg flex items-center justify-center bg-rose-50 text-rose-600">
+                             <FileText size={24} />
+                         </div>
+                      </div>
                  </div>
 
                  {/* Quick Actions */}
                  <div className="bg-white p-6 rounded-xl border shadow-sm flex flex-col justify-center gap-4">
                     <form onSubmit={handleQuickSearch} className="flex gap-2">
                         <input 
-                            className="flex-1 px-4 py-2 border rounded-lg"
+                            className="flex-1 px-4 py-2 border rounded-lg text-sm"
                             placeholder="Enter Admission # or Invoice ID..."
                             value={quickSearch}
                             onChange={e=>setQuickSearch(e.target.value)}
@@ -70,15 +99,15 @@ const Dashboard = () => {
                             <Search size={18} />
                         </button>
                     </form>
-                    <div className="flex gap-2">
+                    <div className="flex gap-2 text-sm">
                         <button 
-                            className="flex-1 py-2 text-sm font-medium border rounded-lg hover:bg-slate-50 text-slate-600"
+                            className="flex-1 py-2 font-medium border rounded-lg hover:bg-slate-50 text-slate-600"
                             onClick={() => navigate('/cashier/payments/new')}
                         >
                             + Record Payment
                         </button>
                          <button 
-                            className="flex-1 py-2 text-sm font-medium border rounded-lg hover:bg-slate-50 text-slate-600"
+                            className="flex-1 py-2 font-medium border rounded-lg hover:bg-slate-50 text-slate-600"
                             onClick={() => navigate('/cashier/invoices')}
                         >
                             Lookup Invoice
@@ -91,7 +120,7 @@ const Dashboard = () => {
             <Card className="p-0 overflow-hidden">
                 <div className="p-4 border-b bg-slate-50 font-medium text-slate-700">Recent Transactions</div>
                 {recentPayments.length === 0 ? (
-                    <div className="p-8 text-center text-slate-500">No payments recorded today.</div>
+                    <div className="p-8 text-center text-slate-500">No payments recorded recently.</div>
                 ) : (
                     <div>
                         {recentPayments.map(p => (
@@ -100,6 +129,9 @@ const Dashboard = () => {
                                     <div className="font-bold flex items-center gap-2">
                                         <span className="text-slate-800">${p.amount}</span>
                                         <span className="text-xs px-2 py-0.5 bg-slate-100 rounded text-slate-500">{p.method}</span>
+                                        {p.status === 'REVERSED' && (
+                                            <span className="text-xs px-2 py-0.5 bg-rose-100 text-rose-600 rounded">REVERSED</span>
+                                        )}
                                     </div>
                                     <div className="text-xs text-slate-500">
                                         Ref: {p.reference || 'N/A'} • {new Date(p.createdAt).toLocaleTimeString()}
@@ -122,5 +154,3 @@ const Dashboard = () => {
 };
 
 export default Dashboard;
-
-

@@ -34,3 +34,8 @@ export const getReceipt = async (paymentId) => {
     const response = await http.get(`/cashier/receipts/${paymentId}`);
     return response.data;
 };
+
+export const getDashboardStats = async () => {
+    const response = await http.get('/cashier/dashboard/stats');
+    return response.data;
+};

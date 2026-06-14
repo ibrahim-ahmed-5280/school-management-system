@@ -35,3 +35,8 @@ export const getTeacherAssignments = (academicYearId) =>
 // Shared / Academic Info
 export const getClassSubjects = (classId) => 
     http.get('/branch/shared/class-subjects', { params: { classId } }).then(res => res.data);
+
+// Profile and Settings
+export const getProfile = () => http.get('/teacher/profile').then(res => res.data);
+export const updateProfile = (data) => http.put('/teacher/profile', data).then(res => res.data);
+export const changePassword = (data) => http.put('/teacher/change-password', data).then(res => res.data);

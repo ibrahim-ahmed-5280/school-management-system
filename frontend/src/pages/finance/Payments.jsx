@@ -106,7 +106,9 @@ const Payments = () => {
                             payments.map((pay) => (
                                 <tr key={pay._id} className="hover:bg-slate-50">
                                     <td className="px-6 py-4 font-mono text-slate-500">RCP-{pay._id.slice(-6)}</td>
-                                    <td className="px-6 py-4 font-bold text-slate-700">INV-{pay.invoiceId?.slice(-6) || 'N/A'}</td>
+                                    <td className="px-6 py-4 font-bold text-slate-700">
+                                        INV-{typeof pay.invoiceId === 'object' && pay.invoiceId ? pay.invoiceId._id?.slice(-6) : typeof pay.invoiceId === 'string' ? pay.invoiceId.slice(-6) : 'N/A'}
+                                    </td>
                                     <td className="px-6 py-4">{new Date(pay.date || pay.createdAt).toLocaleDateString()} {new Date(pay.date || pay.createdAt).toLocaleTimeString()}</td>
                                     <td className="px-6 py-4"><Badge>{pay.method}</Badge></td>
                                     <td className="px-6 py-4 text-slate-500">{pay.reference || '-'}</td>

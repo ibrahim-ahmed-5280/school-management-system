@@ -20,6 +20,8 @@ const userSchema = new mongoose.Schema({
         enum: ['super_admin', 'finance_director', 'branch_admin', 'teacher', 'cashier', 'registrar', 'platform_owner', 'student', 'parent'], 
         required: true 
     },
+    phone: { type: String },
+    address: { type: String },
     scope: { type: String, enum: ['tenant', 'branch', 'platform'], required: true },
     students: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Student' }],
     employmentInfo: {
@@ -27,6 +29,13 @@ const userSchema = new mongoose.Schema({
         allowance: { type: Number, default: 0 },
         deductions: { type: Number, default: 0 }
     },
+    permissions: {
+        allow: [{ type: String, trim: true }],
+        deny: [{ type: String, trim: true }]
+    },
+    permissionProfile: { type: String, trim: true },
+    lastPermissionUpdateAt: { type: Date },
+    lastPermissionUpdateBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     mustChangePassword: { type: Boolean, default: false },
     isActive: { type: Boolean, default: true },
     createdAt: { type: Date, default: Date.now }
@@ -50,6 +59,11 @@ userSchema.pre('validate', function() {
     if (this.role === 'platform_owner' && (this.tenantId || this.branchId)) {
         this.invalidate('tenantId', 'Platform owners cannot belong to a tenant or branch');
     }
+    if (!this.permissions) {
+        this.permissions = { allow: [], deny: [] };
+    }
+    this.permissions.allow = [...new Set((this.permissions.allow || []).map((permission) => String(permission || '').trim()).filter(Boolean))];
+    this.permissions.deny = [...new Set((this.permissions.deny || []).map((permission) => String(permission || '').trim()).filter(Boolean))];
 });
 
 // Enforce uniqueness

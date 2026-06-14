@@ -1,34 +1,65 @@
 import React, { useState, useEffect } from 'react';
 import { Card, Spinner } from '../../components/ui';
-import { apiGetStudentAttendance } from '../../services/api/student.api';
+import { apiGetStudentAttendance, apiGetStudentAcademicYears } from '../../services/api/student.api';
 import { 
     CalendarCheck, 
     CheckCircle2, 
     XCircle, 
     Clock, 
     Calendar,
-    Search,
-    UserCheck
+    UserCheck,
+    AlertCircle
 } from 'lucide-react';
 
 const StudentAttendance = () => {
     const [attendance, setAttendance] = useState([]);
     const [loading, setLoading] = useState(true);
     const [filter, setFilter] = useState('All');
+    const [academicYears, setAcademicYears] = useState([]);
+    const [selectedYearId, setSelectedYearId] = useState('');
+    const [error, setError] = useState('');
 
+    // Load academic years first
     useEffect(() => {
-        const fetchAttendance = async () => {
+        const fetchYears = async () => {
             try {
-                const res = await apiGetStudentAttendance();
-                setAttendance(res.data);
+                const yearsRes = await apiGetStudentAcademicYears();
+                const yearsPayload = yearsRes.data || yearsRes || [];
+                setAcademicYears(yearsPayload);
+                if (yearsPayload.length) {
+                    const current = yearsPayload.find(y => y.isCurrent);
+                    setSelectedYearId((current || yearsPayload[0])._id);
+                } else {
+                    setLoading(false);
+                }
             } catch (err) {
                 console.error(err);
+                setError('Failed to load academic years.');
+                setLoading(false);
+            }
+        };
+        fetchYears();
+    }, []);
+
+    // Fetch attendance for selected year
+    useEffect(() => {
+        if (!selectedYearId && academicYears.length > 0) return;
+        const fetchAttendance = async () => {
+            try {
+                setLoading(true);
+                setError('');
+                const res = await apiGetStudentAttendance(selectedYearId || undefined);
+                setAttendance(res.data || []);
+            } catch (err) {
+                console.error(err);
+                setError(err.response?.data?.message || 'Failed to load attendance. Please try again.');
+                setAttendance([]);
             } finally {
                 setLoading(false);
             }
         };
         fetchAttendance();
-    }, []);
+    }, [selectedYearId]); // eslint-disable-line react-hooks/exhaustive-deps
 
     const filtered = attendance.filter(a => filter === 'All' ? true : a.status === filter);
 
@@ -47,10 +78,36 @@ const StudentAttendance = () => {
     return (
         <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-700">
             {/* Header */}
-            <div>
-                <h1 className="text-3xl font-extrabold text-slate-800 tracking-tight">Attendance Tracking</h1>
-                <p className="text-slate-500 mt-1 font-medium">Review your daily attendance records and consistency report.</p>
+            <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4">
+                <div>
+                    <h1 className="text-3xl font-extrabold text-slate-800 tracking-tight">Attendance Tracking</h1>
+                    <p className="text-slate-500 mt-1 font-medium">Review your daily attendance records and consistency report.</p>
+                </div>
+                {/* Academic year selector */}
+                {academicYears.length > 0 && (
+                    <div className="max-w-xs w-full">
+                        <select
+                            className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-bold text-slate-800 outline-none focus:ring-2 focus:ring-[var(--primary)]"
+                            value={selectedYearId}
+                            onChange={(e) => setSelectedYearId(e.target.value)}
+                        >
+                            {academicYears.map((year) => (
+                                <option key={year._id} value={year._id}>
+                                    {year.name}
+                                </option>
+                            ))}
+                        </select>
+                    </div>
+                )}
             </div>
+
+            {/* Error banner */}
+            {error && (
+                <div className="flex items-center gap-3 p-4 bg-red-50 border border-red-100 text-red-600 rounded-2xl">
+                    <AlertCircle size={20} className="shrink-0" />
+                    <span className="text-sm font-semibold">{error}</span>
+                </div>
+            )}
 
             {/* Stats Grid */}
             <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
@@ -149,7 +206,7 @@ const StudentAttendance = () => {
                                         </div>
                                         <div className="flex items-center gap-1.5 text-xs font-bold text-slate-400 uppercase tracking-widest">
                                             <UserCheck size={12} className="text-slate-300" />
-                                            <span> Teacher: {record.sessionId?.teacherUserId?.name || 'N/A'}</span>
+                                            <span>Teacher: {record.sessionId?.teacherUserId?.name || 'N/A'}</span>
                                         </div>
                                     </div>
                                 </div>
@@ -181,4 +238,3 @@ const StudentAttendance = () => {
 };
 
 export default StudentAttendance;
-

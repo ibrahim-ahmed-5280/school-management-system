@@ -15,26 +15,29 @@ import {
     DollarSign
 } from 'lucide-react';
 import { useBranding } from '../../context/BrandingContext';
+import { useAuth } from '../../context/AuthContext';
+import { filterMenuByPermission } from '../../utils/permissions';
 
 const BranchSidebar = ({ className = '', onNavigate }) => {
     const { branding } = useBranding();
+    const { user } = useAuth();
 
-    const menuItems = [
-        { name: 'Dashboard', path: '/branch', icon: LayoutDashboard },
-        { name: 'Branch Profile', path: '/branch/profile', icon: Building },
-        { name: 'Classes', path: '/branch/classes', icon: BookOpen },
-        { name: 'Timetable', path: '/branch/timetable', icon: CalendarDays },
-        { name: 'Staff Management', path: '/branch/staff', icon: Users },
-        { name: 'Leaves Manager', path: '/branch/hr/leaves', icon: CalendarCheck },
-        { name: 'Payroll Dashboard', path: '/branch/hr/payroll', icon: DollarSign },
-        { name: 'Students', path: '/branch/students', icon: GraduationCap },
-        { name: 'Promotions', path: '/branch/promotions', icon: ArrowUpCircle },
-        { name: 'Teacher Assignments', path: '/branch/assignments', icon: BookOpen },
-        { name: 'Exams', path: '/branch/exams', icon: FileText },
-        { name: 'Results', path: '/branch/results', icon: Activity },
-        { name: 'Student Results', path: '/branch/results/student', icon: Activity },
-        { name: 'Reports', path: '/branch/reports', icon: PieChart }
-    ];
+    const menuItems = filterMenuByPermission(user, [
+        { name: 'Dashboard', path: '/branch', icon: LayoutDashboard, permission: 'branch.dashboard.view' },
+        { name: 'Branch Profile', path: '/branch/profile', icon: Building, permission: 'branch.profile.view' },
+        { name: 'Classes', path: '/branch/classes', icon: BookOpen, permission: 'branch.classes.view' },
+        { name: 'Timetable', path: '/branch/timetable', icon: CalendarDays, permission: 'branch.timetable.view' },
+        { name: 'Staff Management', path: '/branch/staff', icon: Users, permission: 'branch.staff.view' },
+        { name: 'Leaves Manager', path: '/branch/hr/leaves', icon: CalendarCheck, permission: 'hr.leaves.review' },
+        { name: 'Payroll Dashboard', path: '/branch/hr/payroll', icon: DollarSign, permission: 'payroll.view' },
+        { name: 'Students', path: '/branch/students', icon: GraduationCap, permission: 'branch.students.view' },
+        { name: 'Promotions', path: '/branch/promotions', icon: ArrowUpCircle, permission: 'branch.promotions.run' },
+        { name: 'Teacher Assignments', path: '/branch/assignments', icon: BookOpen, permission: 'branch.assignments.view' },
+        { name: 'Exams', path: '/branch/exams', icon: FileText, permission: 'branch.exams.view' },
+        { name: 'Results', path: '/branch/results', icon: Activity, permission: 'branch.results.view' },
+        { name: 'Student Results', path: '/branch/results/student', icon: Activity, permission: 'branch.results.view' },
+        { name: 'Reports', path: '/branch/reports', icon: PieChart, permission: 'branch.reports.view' }
+    ]);
 
     return (
         <aside className={`w-64 bg-[var(--sidebar-bg)] text-slate-200 border-r border-[var(--sidebar-border)] ${className}`}>

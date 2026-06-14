@@ -3,13 +3,10 @@ import { useParams, Link } from 'react-router-dom';
 import { Card, Table, Button, Spinner, Badge, Toast } from '../../components/ui';
 import { getExam, getResults, getResultsSummary } from '../../services/api/teacher.api';
 import { 
-    BookOpen, 
     Users, 
-    BarChart3, 
     Plus, 
     ArrowLeft,
     TrendingUp,
-    TrendingDown,
     Award
 } from 'lucide-react';
 
@@ -54,7 +51,9 @@ const ExamDetails = () => {
                     </Link>
                     <div>
                         <h1 className="text-3xl font-black text-slate-800">{exam.name}</h1>
-                        <p className="text-slate-500 font-semibold">{exam.term} • Class ID: {exam.classId}</p>
+                        <p className="text-slate-500 font-semibold">
+                            {exam.termId?.name || (typeof exam.termId === 'string' ? exam.termId : '') || exam.term || "Term not specified"} • Class: {exam.classId?.name || (typeof exam.classId === 'string' ? exam.classId : '') || exam.className || "Class not specified"}
+                        </p>
                     </div>
                 </div>
                 <Link to={`/teacher/results/entry?examId=${examId}`}>
@@ -92,10 +91,10 @@ const ExamDetails = () => {
                     <Card>
                         <p className="text-xs font-bold uppercase tracking-wider text-slate-400">Status</p>
                         <h3 className="text-3xl font-black mt-1 flex items-center gap-2">
-                             <Badge variant="primary" className="text-lg px-4">Active</Badge>
+                             <Badge variant={exam.status === 'OPEN' ? 'success' : 'warning'} className="text-lg px-4">{exam.status || 'Active'}</Badge>
                         </h3>
                         <div className="mt-4 flex items-center gap-1 text-xs text-slate-500 font-medium italic">
-                            Accepting results
+                            {exam.status === 'OPEN' ? 'Accepting results' : 'Results locked'}
                         </div>
                     </Card>
                 </div>
@@ -103,7 +102,7 @@ const ExamDetails = () => {
 
             {/* Results Table */}
             <Card title="Student Performance List" className="border-none shadow-sm overflow-hidden">
-                <Table headers={['Student', 'Admission #', 'Total Score', 'Grade', 'Action']}>
+                <Table headers={['Student', 'Admission #', 'Score (Max)', 'Grade/Status', 'Action']}>
                     {results.map((res) => (
                         <tr key={res._id} className="hover:bg-slate-50 transition-colors">
                             <td className="px-6 py-4 font-bold text-slate-800">
@@ -112,12 +111,14 @@ const ExamDetails = () => {
                             <td className="px-6 py-4 font-mono text-xs font-bold text-slate-500">
                                 {res.studentId?.admissionNumber}
                             </td>
-                            <td className="px-6 py-4 font-black text-[var(--primary)]">{res.total}</td>
+                            <td className="px-6 py-4 font-black text-[var(--primary)]">
+                                {res.marksObtained ?? 0} / {res.maxScore ?? exam.maxScore ?? '—'} ({res.percentage ?? 0}%)
+                            </td>
                             <td className="px-6 py-4">
                                 <Badge 
-                                    variant={res.grade === 'A' || res.grade === 'B' ? 'success' : res.grade === 'F' ? 'danger' : 'warning'}
+                                    variant={res.status === 'PASS' || res.grade === 'A' || res.grade === 'B' ? 'success' : (res.status === 'FAIL' || res.grade === 'F' ? 'danger' : 'warning')}
                                 >
-                                    {res.grade}
+                                    {res.grade || res.status || '—'}
                                 </Badge>
                             </td>
                             <td className="px-6 py-4">
@@ -143,5 +144,3 @@ const ExamDetails = () => {
 };
 
 export default ExamDetails;
-
-

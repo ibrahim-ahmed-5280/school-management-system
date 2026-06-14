@@ -1,221 +1,191 @@
 import React, { useState, useEffect } from 'react';
-import { 
-  History, 
-  Search, 
-  Filter, 
-  Calendar, 
-  MapPin, 
-  ShieldCheck, 
-  AlertCircle, 
-  Clock, 
-  User, 
-  ChevronRight, 
-  Loader2,
-  X,
-  Code
+import {
+    Search, Download, Filter, User, ShieldAlert,
+    Save, LogIn, History, Clock, AlertTriangle,
+    Info, FileText
 } from 'lucide-react';
 import tenantService from '../../services/tenantService';
 
+const NAVY = '#1b2a4a';
+const BLUE = '#4477f5';
+
+const typeMeta = {
+    danger:  { bg: 'bg-rose-100',   text: 'text-rose-700',   border: 'border-rose-200',   dot: 'bg-rose-500' },
+    warning: { bg: 'bg-amber-100',  text: 'text-amber-700',  border: 'border-amber-200',  dot: 'bg-amber-400' },
+    update:  { bg: 'bg-blue-100',   text: 'text-blue-700',   border: 'border-blue-200',   dot: 'bg-blue-500' },
+    default: { bg: 'bg-slate-100',  text: 'text-slate-600',  border: 'border-slate-200',  dot: 'bg-slate-400' },
+};
+
+const getActionIcon = (action = '') => {
+    const a = action.toUpperCase();
+    if (a.includes('CREATED') || a.includes('ADD')) return <Save size={14} />;
+    if (a.includes('LOGIN'))   return <LogIn size={14} />;
+    if (a.includes('SUSPEND') || a.includes('DEACTIVATED')) return <ShieldAlert size={14} />;
+    if (a.includes('WARN'))    return <AlertTriangle size={14} />;
+    return <History size={14} />;
+};
+
+const getType = (type = '') => typeMeta[type] || typeMeta.default;
+
+const actorInitials = (name = '') => {
+    const parts = String(name).trim().split(' ');
+    if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
+    return String(name || 'S')[0].toUpperCase();
+};
+
 const AuditLogs = () => {
     const [logs, setLogs] = useState([]);
-    const [branches, setBranches] = useState([]);
     const [loading, setLoading] = useState(true);
-    const [filters, setFilters] = useState({ branchId: '', action: '', from: '', to: '' });
-    const [selectedLog, setSelectedLog] = useState(null);
+    const [search, setSearch] = useState('');
+    const [filter, setFilter] = useState('all');
+    const [error, setError] = useState('');
 
     useEffect(() => {
-        const load = async () => {
-            try {
-                const bRes = await tenantService.getBranches();
-                setBranches(bRes.data);
-            } catch (err) {
-                console.error(err);
-            }
-        };
-        load();
+        tenantService.getAuditLogs()
+            .then(res => { setLogs(res.data?.logs || res.data || []); setError(''); })
+            .catch(err => { setLogs([]); setError(err.response?.data?.message || 'Failed to load school audit logs.'); })
+            .finally(() => setLoading(false));
     }, []);
 
-    useEffect(() => {
-        const fetchLogs = async () => {
-            setLoading(true);
-            try {
-                const res = await tenantService.getAuditLogs(filters);
-                setLogs(res.data);
-            } catch (err) {
-                console.error(err);
-            } finally {
-                setLoading(false);
-            }
-        };
-        fetchLogs();
-    }, [filters]);
+    const filteredLogs = logs.filter(log => {
+        const hay = `${log.action} ${log.actor || log.user} ${log.target}`.toLowerCase();
+        const matchSearch = hay.includes(search.trim().toLowerCase());
+        const matchFilter = filter === 'all' || log.type === filter;
+        return matchSearch && matchFilter;
+    });
+
+    const typeFilters = [
+        { id: 'all',     label: 'All' },
+        { id: 'danger',  label: 'Security & Suspension' },
+        { id: 'warning', label: 'Warnings' },
+        { id: 'update',  label: 'Updates & Changes' },
+        { id: 'default', label: 'Info' },
+    ];
+
+    if (loading) return (
+        <div className="flex items-center justify-center min-h-[400px]">
+            <div className="w-10 h-10 border-4 border-slate-200 border-t-[#4477f5] rounded-full animate-spin" />
+        </div>
+    );
 
     return (
-        <div className="space-y-6 pb-20">
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div className="space-y-6">
+            {/* Header */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                 <div>
-                     <h1 className="text-xl font-black text-slate-900 tracking-tight mb-1">Institutional <span className="text-[var(--primary)]">Audit Trail</span></h1>
-                     <p className="text-slate-500 font-bold uppercase tracking-widest text-[9px]">Real-time investigative logs for sensitive operations.</p>
-                </div>
-                <div className="bg-rose-50 px-4 py-1.5 rounded-xl border border-rose-100 flex items-center gap-2 text-rose-600">
-                    <ShieldCheck size={16} />
-                    <span className="text-[9px] font-black uppercase tracking-wider">Tamper-Proof Records</span>
+                    <h2 className="text-2xl font-extrabold text-slate-900">School Audit Logs</h2>
+                    <p className="text-slate-500 text-sm mt-1">Review activity trails, staff modifications and security settings within this institution.</p>
+                    {error && <p className="text-sm font-semibold text-rose-600 mt-1">{error}</p>}
                 </div>
             </div>
 
-            {/* Advanced Filters */}
-            <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm grid grid-cols-1 md:grid-cols-4 gap-4">
-                <div className="relative group">
-                    <MapPin className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-[var(--primary)] transition-colors" size={14} />
-                    <select 
-                      className="w-full h-10 bg-slate-50 border border-slate-200 rounded-lg pl-10 pr-3 font-semibold text-slate-900 focus:bg-white outline-none appearance-none transition-all text-xs"
-                      value={filters.branchId}
-                      onChange={(e) => setFilters({...filters, branchId: e.target.value})}
-                    >
-                        <option value="">All Branches</option>
-                        {branches.map(b => <option key={b._id} value={b._id}>{b.name}</option>)}
-                    </select>
-                </div>
-                <div className="relative group md:col-span-1">
-                    <AlertCircle className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-[var(--primary)] transition-colors" size={14} />
-                    <input 
-                      type="text" 
-                      placeholder="Filter by action (e.g. USER_CREATED)"
-                      className="w-full h-10 bg-slate-50 border border-slate-200 rounded-lg pl-10 pr-3 font-semibold text-slate-900 focus:bg-white outline-none transition-all text-xs"
-                      value={filters.action}
-                      onChange={(e) => setFilters({...filters, action: e.target.value})}
-                    />
-                </div>
-                <div className="relative group">
-                    <Calendar className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" size={14} />
-                    <input 
-                      type="date" 
-                      className="w-full h-10 bg-slate-50 border border-slate-200 rounded-lg pl-10 pr-3 font-semibold text-slate-900 focus:bg-white outline-none transition-all text-xs"
-                      value={filters.from}
-                      onChange={(e) => setFilters({...filters, from: e.target.value})}
-                    />
-                </div>
-                <div className="relative group">
-                    <Calendar className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" size={14} />
-                    <input 
-                      type="date" 
-                      className="w-full h-10 bg-slate-50 border border-slate-200 rounded-lg pl-10 pr-3 font-semibold text-slate-900 focus:bg-white outline-none transition-all text-xs"
-                      value={filters.to}
-                      onChange={(e) => setFilters({...filters, to: e.target.value})}
-                    />
-                </div>
-            </div>
-
-            {/* Logs Timeline */}
-            <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-                <div className="p-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/30">
-                     <p className="text-[9px] font-black uppercase text-slate-400 tracking-wider">Sequence Log History</p>
-                     <p className="text-[9px] font-black uppercase text-[var(--primary)] tracking-wider">Showing {logs.length} events</p>
-                </div>
-
-                <div className="divide-y divide-slate-100">
-                    {loading ? (
-                        <div className="p-10 text-center"><Loader2 className="animate-spin text-[var(--primary)] mx-auto w-8 h-8" /></div>
-                    ) : logs.length === 0 ? (
-                        <div className="p-10 text-center text-slate-400 font-semibold text-sm">No audit entries found for chosen filters.</div>
-                    ) : (
-                        logs.map(log => (
-                            <div key={log._id} className="p-5 flex items-start gap-5 hover:bg-slate-50/50 transition-all group">
-                                <div className="flex flex-col items-center">
-                                    <div className="w-10 h-10 bg-slate-900 text-white rounded-xl flex items-center justify-center shadow group-hover:bg-[var(--primary)] transition-colors">
-                                        <ShieldCheck size={16} />
-                                    </div>
-                                    <div className="w-0.5 h-10 bg-slate-100 group-hover:bg-[var(--primary)]/20 transition-colors mt-2" />
-                                </div>
-                                
-                                <div className="flex-1 space-y-3">
-                                     <div className="flex items-start justify-between">
-                                        <div>
-                                            <div className="flex items-center gap-2 mb-1">
-                                                <span className="px-2 py-0.5 bg-slate-100 text-slate-900 rounded text-[9px] font-black tracking-wide uppercase">{log.action}</span>
-                                                <span className="text-[9px] font-bold text-slate-300">•</span>
-                                                <span className="text-[9px] font-black text-slate-400 uppercase tracking-wide flex items-center gap-1">
-                                                    <User size={10} className="text-[var(--primary)]" />
-                                                    {log.actorRole?.replace('_', ' ')}
-                                                </span>
-                                            </div>
-                                            <h4 className="text-base font-black text-slate-900 tracking-tight">Entity {log.entityType} Update</h4>
-                                        </div>
-                                        <div className="text-right">
-                                             <div className="flex items-center gap-1.5 text-slate-400 font-bold text-[9px] uppercase tracking-wider mb-0.5">
-                                                <Clock size={10} />
-                                                {new Date(log.createdAt).toLocaleString()}
-                                             </div>
-                                             <p className="text-[8px] font-black text-slate-300 tracking-tighter uppercase">{log.ip}</p>
-                                        </div>
-                                     </div>
-
-                                     <div className="p-4 bg-slate-50 rounded-xl border border-slate-100 group-hover:bg-white transition-all flex items-center justify-between">
-                                          <div className="flex items-center gap-3">
-                                             <div className="w-8 h-8 rounded-lg bg-white border border-slate-150 flex items-center justify-center text-slate-400 shadow-sm">
-                                                 <Code size={14} />
-                                             </div>
-                                             <div>
-                                                 <p className="text-[9px] font-bold text-slate-400 uppercase tracking-wider leading-none mb-0.5">Target Identity</p>
-                                                 <p className="text-xs font-black text-slate-900 font-mono tracking-tight">{log.entityId}</p>
-                                             </div>
-                                          </div>
-                                          <button 
-                                            onClick={() => setSelectedLog(log)}
-                                            className="h-8 px-4 bg-white border border-slate-250 rounded-lg font-black text-[9px] tracking-widest uppercase text-slate-600 hover:bg-slate-900 hover:text-white transition-all flex items-center gap-1.5 group/btn active:scale-95 shadow-sm"
-                                          >
-                                              Inspect Snapshot
-                                              <ChevronRight size={12} className="group-hover/btn:translate-x-0.5 transition-transform" />
-                                          </button>
-                                     </div>
-                                 </div>
-                             </div>
-                         ))
-                     )}
-                 </div>
-             </div>
-
-            {/* Inspect Modal */}
-            {selectedLog && (
-                <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 animate-in fade-in duration-300">
-                    <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-md" onClick={() => setSelectedLog(null)} />
-                    <div className="bg-[#1e293b] w-full max-w-3xl rounded-2xl shadow-2xl relative z-10 overflow-hidden flex flex-col max-h-[85vh] animate-in zoom-in-95 duration-200 border border-white/5">
-                        <div className="p-6 border-b border-white/5 flex justify-between items-center bg-white/5">
-                            <div>
-                                <h3 className="text-lg font-black text-white tracking-tight italic">Structural Differential</h3>
-                                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mt-0.5">Snapshot State ID: {selectedLog._id}</p>
-                            </div>
-                            <button onClick={() => setSelectedLog(null)} className="p-2 bg-white/5 hover:bg-white/10 rounded-lg transition-all text-white">
-                                <X size={18} />
-                            </button>
-                        </div>
-                        
-                        <div className="flex-1 overflow-y-auto p-6 grid md:grid-cols-2 gap-6 custom-scrollbar">
-                            <div className="space-y-3">
-                                <p className="text-[9px] font-black uppercase text-rose-400 tracking-wider ml-1">Original State (Before)</p>
-                                <div className="bg-slate-900 rounded-xl p-4 border border-white/5 font-mono text-[11px] text-rose-300/80 overflow-x-auto whitespace-pre h-[300px]">
-                                    {JSON.stringify(selectedLog.before, null, 2) || "// No prior state recorded"}
-                                </div>
-                            </div>
-                            <div className="space-y-3">
-                                <p className="text-[9px] font-black uppercase text-emerald-400 tracking-wider ml-1">Mutated State (After)</p>
-                                <div className="bg-slate-900 rounded-xl p-4 border border-white/5 font-mono text-[11px] text-emerald-300/80 overflow-x-auto whitespace-pre h-[300px]">
-                                    {JSON.stringify(selectedLog.after, null, 2) || "// Operation deleted/terminated state"}
-                                </div>
-                            </div>
-                        </div>
-
-                        <div className="p-4 border-t border-white/5 bg-white/5 text-slate-400 text-[9px] font-black uppercase tracking-wider flex items-center gap-2">
-                            <ShieldCheck size={14} className="text-emerald-500" />
-                            Security Integrity Checked. Action performed by UID: {selectedLog.actorUserId}
-                        </div>
+            {/* Filters */}
+            <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-4 space-y-3">
+                <div className="flex flex-col sm:flex-row gap-3">
+                    <div className="relative flex-1">
+                        <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                        <input
+                            type="text"
+                            placeholder="Search by action, user or target..."
+                            className="w-full h-10 pl-10 pr-4 bg-slate-55/40 border border-slate-200 rounded-xl text-sm font-semibold text-slate-800 placeholder:text-slate-400 outline-none focus:bg-white focus:ring-2 focus:ring-[#4477f5]/20 focus:border-[#4477f5] transition"
+                            value={search}
+                            onChange={e => setSearch(e.target.value)}
+                        />
                     </div>
                 </div>
-            )}
+                {/* Type filter pills */}
+                <div className="flex flex-wrap gap-2">
+                    {typeFilters.map(f => (
+                        <button key={f.id} onClick={() => setFilter(f.id)}
+                            className={`px-3.5 py-1.5 rounded-lg text-xs font-bold border transition ${
+                                filter === f.id
+                                    ? 'text-white border-transparent'
+                                    : 'bg-slate-50 border-slate-200 text-slate-600 hover:border-slate-350'
+                            }`}
+                            style={filter === f.id ? { background: NAVY } : {}}>
+                            {f.label}
+                        </button>
+                    ))}
+                    <span className="ml-auto text-xs font-semibold text-slate-450 self-center">
+                        {filteredLogs.length} entries
+                    </span>
+                </div>
+            </div>
+
+            {/* Log Table */}
+            <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
+                <div className="overflow-x-auto">
+                    <table className="w-full text-left border-collapse">
+                        <thead>
+                            <tr className="border-b border-slate-100 bg-slate-50/80">
+                                <th className="px-5 py-3.5 text-[11px] font-extrabold uppercase tracking-wider text-slate-400">Action</th>
+                                <th className="px-5 py-3.5 text-[11px] font-extrabold uppercase tracking-wider text-slate-400">Performed By</th>
+                                <th className="px-5 py-3.5 text-[11px] font-extrabold uppercase tracking-wider text-slate-400">Target Resource</th>
+                                <th className="px-5 py-3.5 text-[11px] font-extrabold uppercase tracking-wider text-slate-400">Time</th>
+                            </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-50">
+                            {filteredLogs.map(log => {
+                                const tm = getType(log.type);
+                                const actor = log.actor || log.user || 'System';
+                                return (
+                                    <tr key={log.id || log._id} className="hover:bg-slate-50/60 transition-colors">
+                                        {/* Action */}
+                                        <td className="px-5 py-4">
+                                            <div className="flex items-center gap-3">
+                                                <div className={`w-8 h-8 rounded-lg flex items-center justify-center border ${tm.bg} ${tm.text} ${tm.border} flex-shrink-0`}>
+                                                    {getActionIcon(log.action)}
+                                                </div>
+                                                <div>
+                                                    <p className="font-bold text-slate-800 text-sm">{log.action}</p>
+                                                    <span className={`inline-flex items-center gap-1 text-[10px] font-extrabold uppercase tracking-widest mt-0.5`}>
+                                                        <span className={`w-1.5 h-1.5 rounded-full ${tm.dot}`} />
+                                                        <span className={tm.text}>{log.type || 'info'}</span>
+                                                    </span>
+                                                </div>
+                                            </div>
+                                        </td>
+                                        {/* Actor */}
+                                        <td className="px-5 py-4">
+                                            <div className="flex items-center gap-2.5">
+                                                <div className="w-7 h-7 rounded-lg flex items-center justify-center text-white text-[11px] font-extrabold flex-shrink-0"
+                                                    style={{ background: NAVY }}>
+                                                    {actorInitials(actor)}
+                                                </div>
+                                                <span className="text-sm font-semibold text-slate-700">{actor}</span>
+                                            </div>
+                                        </td>
+                                        {/* Target */}
+                                        <td className="px-5 py-4">
+                                            <span className="text-sm text-slate-500 font-semibold">{log.target || '—'}</span>
+                                        </td>
+                                        {/* Time */}
+                                        <td className="px-5 py-4">
+                                            <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-400">
+                                                <Clock size={12} />
+                                                {log.time || log.date || (log.createdAt
+                                                    ? new Date(log.createdAt).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })
+                                                    : '—')}
+                                            </div>
+                                        </td>
+                                    </tr>
+                                );
+                            })}
+                            {filteredLogs.length === 0 && (
+                                <tr>
+                                    <td colSpan={4} className="py-16 text-center">
+                                        <FileText size={32} className="mx-auto mb-3 text-slate-200" />
+                                        <p className="text-sm font-semibold text-slate-400">No audit logs found</p>
+                                        <p className="text-xs text-slate-300 mt-1">Try adjusting your search or filter</p>
+                                    </td>
+                                </tr>
+                            )}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
         </div>
     );
 };
 
 export default AuditLogs;
-
-

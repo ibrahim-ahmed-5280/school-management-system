@@ -1,29 +1,34 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { 
-    Users, GraduationCap, Calendar, CreditCard, ChevronRight, Bell, AlertTriangle
+    Users, GraduationCap, Calendar, CreditCard, ChevronRight, Bell, AlertTriangle, AlertCircle, RefreshCw
 } from 'lucide-react';
 import api from '../../services/api';
 
 const ParentDashboard = () => {
     const [children, setChildren] = useState([]);
     const [loading, setLoading] = useState(true);
+    const [error, setError] = useState('');
     const navigate = useNavigate();
 
-    useEffect(() => {
-        const fetchDashboard = async () => {
-            try {
-                const res = await api.get('/parent/dashboard');
-                if (res.data?.success) {
-                    setChildren(res.data.data);
-                }
-            } catch (err) {
-                console.error('Failed to fetch parent dashboard', err);
-            } finally {
-                setLoading(false);
+    const fetchDashboard = async () => {
+        setLoading(true);
+        setError('');
+        try {
+            const res = await api.get('/parent/dashboard');
+            if (res.data?.success) {
+                setChildren(res.data.data || []);
+            } else {
+                setError('Failed to fetch dashboard data.');
             }
-        };
+        } catch (err) {
+            setError(err.response?.data?.message || 'Error loading parent dashboard.');
+        } finally {
+            setLoading(false);
+        }
+    };
 
+    useEffect(() => {
         fetchDashboard();
     }, []);
 
@@ -44,6 +49,20 @@ const ParentDashboard = () => {
                 </h1>
                 <p className="text-slate-400 font-medium text-xs">Monitor your children's educational progress and financial accounts.</p>
             </div>
+
+            {error && (
+                <div className="p-4 rounded-xl bg-rose-50 border border-rose-100 flex items-center gap-3 text-rose-900">
+                    <AlertCircle className="text-rose-500 flex-shrink-0" size={20} />
+                    <div className="text-sm font-semibold flex-1">{error}</div>
+                    <button 
+                        onClick={fetchDashboard} 
+                        className="text-xs bg-rose-100 hover:bg-rose-200 text-rose-800 font-bold px-3 py-1.5 rounded-lg transition flex items-center gap-1.5"
+                    >
+                        <RefreshCw size={12} />
+                        Retry
+                    </button>
+                </div>
+            )}
 
             {children.length === 0 ? (
                 <div className="bg-white border border-slate-200 rounded-xl p-6 text-center max-w-md mx-auto shadow-sm">

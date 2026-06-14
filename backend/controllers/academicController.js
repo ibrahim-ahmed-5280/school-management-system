@@ -1,5 +1,6 @@
 const AcademicYear = require('../models/AcademicYear');
 const Class = require('../models/Class');
+const Branch = require('../models/Branch');
 
 // @desc    Create Academic Year
 // @route   POST /api/academic/years
@@ -27,9 +28,20 @@ const createAcademicYear = async (req, res) => {
 const createClass = async (req, res) => {
     const { name, gradeLevel, branchId } = req.body;
     try {
+        const targetBranchId = req.branchId || branchId;
+        if (!targetBranchId) {
+            return res.status(403).json({ message: 'Access denied for this academic resource.' });
+        }
+        
+        // Verify branch exists and belongs to the same tenant
+        const branch = await Branch.findOne({ _id: targetBranchId, tenantId: req.tenantId });
+        if (!branch) {
+            return res.status(403).json({ message: 'Access denied for this academic resource.' });
+        }
+
         const newClass = await Class.create({
             tenantId: req.tenantId,
-            branchId: branchId || req.branchId,
+            branchId: targetBranchId,
             name,
             gradeLevel
         });
@@ -51,7 +63,22 @@ const getAcademicYears = async (req, res) => {
 const getClasses = async (req, res) => {
     try {
         const query = { tenantId: req.tenantId };
-        if (req.branchId) query.branchId = req.branchId;
+        const reqQuery = req.query || {};
+        const queryBranchId = reqQuery.branchId;
+
+        if (req.branchId) {
+            if (queryBranchId && queryBranchId.toString() !== req.branchId.toString()) {
+                return res.status(403).json({ message: 'Access denied for this academic resource.' });
+            }
+            query.branchId = req.branchId;
+        } else if (queryBranchId) {
+            const branch = await Branch.findOne({ _id: queryBranchId, tenantId: req.tenantId });
+            if (!branch) {
+                return res.status(403).json({ message: 'Access denied for this academic resource.' });
+            }
+            query.branchId = queryBranchId;
+        }
+
         const classes = await Class.find(query);
         res.json(classes);
     } catch (error) {

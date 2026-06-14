@@ -154,15 +154,12 @@ exports.getClasses = async (req, res) => {
 
 exports.getClass = async (req, res) => {
     try {
-        const cls = await Class.findOne({
-            _id: req.params.classId,
-            tenantId: req.user.tenantId,
-            branchId: req.user.branchId
-        });
+        const classExists = await Class.findOne({ _id: req.params.classId, tenantId: req.user.tenantId, branchId: req.user.branchId });
+        if (!classExists) {
+            return sendError(res, 403, 'Access denied for this branch resource.');
+        }
 
-        if (!cls) return sendError(res, 404, 'Class not found');
-
-        sendResponse(res, true, cls);
+        sendResponse(res, true, classExists);
     } catch (error) {
         console.error('getClass Error:', error);
         sendError(res, 500, 'Server Error');
@@ -173,14 +170,12 @@ exports.updateClass = async (req, res) => {
     try {
         const { name, gradeLevel } = req.body;
         
-        const cls = await Class.findOne({
-            _id: req.params.classId,
-            tenantId: req.user.tenantId,
-            branchId: req.user.branchId
-        });
+        const classExists = await Class.findOne({ _id: req.params.classId, tenantId: req.user.tenantId, branchId: req.user.branchId });
+        if (!classExists) {
+            return sendError(res, 403, 'Access denied for this branch resource.');
+        }
 
-        if (!cls) return sendError(res, 404, 'Class not found');
-
+        const cls = classExists;
         const beforeSnapshot = cls.toObject();
 
         if (name) cls.name = name;
@@ -248,7 +243,7 @@ exports.createBranchUser = async (req, res) => {
             email: normalizedEmail
         });
         if (existingUser) {
-            return sendError(res, 400, 'User with this email already exists in tenant');
+            return sendError(res, 409, 'Email already exists for this school.');
         }
 
         const newUser = new User({
@@ -361,39 +356,29 @@ exports.updateBranchUser = async (req, res) => {
 // --- C.1) Teacher Assignments Management ---
 
 exports.createTeacherWithAssignments = async (req, res) => {
-    const session = await mongoose.startSession();
-    session.startTransaction();
+    // Manual rollback tracking — works on standalone MongoDB (no replica set required)
+    let createdUserId = null;
+    const createdAssignmentIds = [];
+
     try {
         const { name, email, password, assignments } = req.body;
         if (!name || !email || !password || String(password).length < 8) {
-            await session.abortTransaction();
-            session.endSession();
             return sendError(res, 400, 'Name, email, and a password of at least 8 characters are required');
         }
         const normalizedEmail = String(email).trim().toLowerCase();
 
-        // 1. Create Teacher User
+        // 1. Duplicate email check
         const existingUser = await User.findOne({ tenantId: req.user.tenantId, email: normalizedEmail });
         if (existingUser) {
-            await session.abortTransaction();
-            return sendError(res, 400, 'User already exists');
+            return sendError(res, 409, 'Email already exists for this school.');
         }
 
-        const newUser = new User({
-            tenantId: req.user.tenantId,
-            branchId: req.user.branchId,
-            name,
-            email: normalizedEmail,
-            passwordHash: password,
-            role: 'teacher',
-            scope: 'branch'
-        });
-        await newUser.save({ session });
-
-        // 2. Create Assignments
+        // 2. Validate assignments payload before touching the DB
         if (assignments && assignments.length > 0) {
             const invalid = assignments.find(a => !a.subjectId || !a.classId || !a.academicYearId);
-            if (invalid) return sendError(res, 400, 'Each assignment must include classId, subjectId, and academicYearId');
+            if (invalid) {
+                return sendError(res, 400, 'Each assignment must include classId, subjectId, and academicYearId');
+            }
 
             const uniqueKey = new Set();
             for (const a of assignments) {
@@ -404,18 +389,64 @@ exports.createTeacherWithAssignments = async (req, res) => {
                 uniqueKey.add(key);
             }
 
-            const assignmentDocs = assignments.map(a => ({
-                tenantId: req.user.tenantId,
-                branchId: req.user.branchId,
-                teacherUserId: newUser._id,
-                academicYearId: a.academicYearId,
-                classId: a.classId,
-                sectionId: a.sectionId || null,
-                subjectId: a.subjectId,
-                subject: a.subjectId,
-                isActive: true
-            }));
-            await TeacherAssignment.insertMany(assignmentDocs, { session });
+            // Validate all request-supplied IDs against the DB
+            for (const a of assignments) {
+                const academicYear = await AcademicYear.findOne({ _id: a.academicYearId, tenantId: req.user.tenantId });
+                if (!academicYear) {
+                    return sendError(res, 403, 'Access denied for this branch resource.');
+                }
+
+                const classObj = await Class.findOne({ _id: a.classId, tenantId: req.user.tenantId, branchId: req.user.branchId });
+                if (!classObj) {
+                    return sendError(res, 403, 'Access denied for this branch resource.');
+                }
+
+                if (a.sectionId) {
+                    const section = await Section.findOne({ _id: a.sectionId, tenantId: req.user.tenantId, branchId: req.user.branchId, classId: a.classId });
+                    if (!section) {
+                        return sendError(res, 403, 'Access denied for this branch resource.');
+                    }
+                }
+
+                const subject = await Subject.findOne({ _id: a.subjectId, tenantId: req.user.tenantId });
+                if (!subject) {
+                    return sendError(res, 403, 'Access denied for this branch resource.');
+                }
+                if (subject.branchId && String(subject.branchId) !== String(req.user.branchId)) {
+                    return sendError(res, 403, 'Access denied for this branch resource.');
+                }
+            }
+        }
+
+        // 3. Create teacher User
+        const newUser = new User({
+            tenantId: req.user.tenantId,
+            branchId: req.user.branchId,
+            name,
+            email: normalizedEmail,
+            passwordHash: password,
+            role: 'teacher',
+            scope: 'branch'
+        });
+        await newUser.save();
+        createdUserId = newUser._id;
+
+        // 4. Create assignments one-by-one so we can track and roll back on failure
+        if (assignments && assignments.length > 0) {
+            for (const a of assignments) {
+                const [doc] = await TeacherAssignment.create([{
+                    tenantId: req.user.tenantId,
+                    branchId: req.user.branchId,
+                    teacherUserId: newUser._id,
+                    academicYearId: a.academicYearId,
+                    classId: a.classId,
+                    sectionId: a.sectionId || null,
+                    subjectId: a.subjectId,
+                    subject: a.subjectId,
+                    isActive: true
+                }]);
+                createdAssignmentIds.push(doc._id);
+            }
         }
 
         await logAction({
@@ -431,17 +462,19 @@ exports.createTeacherWithAssignments = async (req, res) => {
             userAgent: req.get('User-Agent')
         });
 
-        await session.commitTransaction();
-        session.endSession();
-
         const userObj = newUser.toObject();
         delete userObj.passwordHash;
         sendResponse(res, true, userObj, 'Teacher created with assignments');
     } catch (error) {
-        await session.abortTransaction();
-        session.endSession();
+        // Manual rollback: remove any assignments created so far, then the user
+        if (createdAssignmentIds.length > 0) {
+            await TeacherAssignment.deleteMany({ _id: { $in: createdAssignmentIds } }).catch(() => {});
+        }
+        if (createdUserId) {
+            await User.deleteOne({ _id: createdUserId }).catch(() => {});
+        }
         console.error('createTeacherWithAssignments Error:', error);
-        sendError(res, 500, error.message);
+        sendError(res, 500, 'Failed to create teacher. Any partial data has been rolled back.');
     }
 };
 
@@ -450,13 +483,10 @@ exports.updateTeacherAssignments = async (req, res) => {
         const { assignments } = req.body;
         const { teacherUserId } = req.params;
 
-        // Verification: ensure teacher belongs to this branch
         const teacher = await User.findOne({ _id: teacherUserId, tenantId: req.user.tenantId, branchId: req.user.branchId, role: 'teacher' });
-        if (!teacher) return sendError(res, 404, 'Teacher not found in this branch');
-
-        // Replace existing assignments for this teacher
-        // (Wiping and re-inserting is often cleaner for "management" views unless you need granular history)
-        await TeacherAssignment.deleteMany({ teacherUserId, tenantId: req.user.tenantId, branchId: req.user.branchId });
+        if (!teacher) {
+            return sendError(res, 403, 'Access denied for this branch resource.');
+        }
 
         if (assignments && assignments.length > 0) {
             const invalid = assignments.find(a => !a.subjectId || !a.classId || !a.academicYearId);
@@ -471,6 +501,37 @@ exports.updateTeacherAssignments = async (req, res) => {
                 uniqueKey.add(key);
             }
 
+            // Validate all request-supplied IDs
+            for (const a of assignments) {
+                const academicYear = await AcademicYear.findOne({ _id: a.academicYearId, tenantId: req.user.tenantId });
+                if (!academicYear) {
+                    return sendError(res, 403, 'Access denied for this branch resource.');
+                }
+
+                const classObj = await Class.findOne({ _id: a.classId, tenantId: req.user.tenantId, branchId: req.user.branchId });
+                if (!classObj) {
+                    return sendError(res, 403, 'Access denied for this branch resource.');
+                }
+
+                if (a.sectionId) {
+                    const section = await Section.findOne({ _id: a.sectionId, tenantId: req.user.tenantId, branchId: req.user.branchId, classId: a.classId });
+                    if (!section) {
+                        return sendError(res, 403, 'Access denied for this branch resource.');
+                    }
+                }
+
+                const subject = await Subject.findOne({ _id: a.subjectId, tenantId: req.user.tenantId });
+                if (!subject) {
+                    return sendError(res, 403, 'Access denied for this branch resource.');
+                }
+                if (subject.branchId && String(subject.branchId) !== String(req.user.branchId)) {
+                    return sendError(res, 403, 'Access denied for this branch resource.');
+                }
+            }
+
+            // Replace existing assignments for this teacher
+            await TeacherAssignment.deleteMany({ teacherUserId, tenantId: req.user.tenantId, branchId: req.user.branchId });
+
             const assignmentDocs = assignments.map(a => ({
                 tenantId: req.user.tenantId,
                 branchId: req.user.branchId,
@@ -483,6 +544,9 @@ exports.updateTeacherAssignments = async (req, res) => {
                 isActive: true
             }));
             await TeacherAssignment.insertMany(assignmentDocs);
+        } else {
+            // Replace existing assignments with empty array
+            await TeacherAssignment.deleteMany({ teacherUserId, tenantId: req.user.tenantId, branchId: req.user.branchId });
         }
 
         await logAction({
@@ -508,9 +572,16 @@ exports.updateTeacherAssignments = async (req, res) => {
 exports.getTeacherAssignments = async (req, res) => {
     try {
         const { teacherUserId } = req.params;
+
+        const teacher = await User.findOne({ _id: teacherUserId, tenantId: req.user.tenantId, branchId: req.user.branchId, role: 'teacher' });
+        if (!teacher) {
+            return sendError(res, 403, 'Access denied for this branch resource.');
+        }
+
         const assignments = await TeacherAssignment.find({
             teacherUserId,
-            tenantId: req.user.tenantId
+            tenantId: req.user.tenantId,
+            branchId: req.user.branchId
         })
         .populate('classId', 'name')
         .populate('sectionId', 'name')
@@ -530,10 +601,11 @@ exports.getStudents = async (req, res) => {
     try {
         const { classId, academicYearId, status, q } = req.query;
         
-        // Strategy: First find Enrollments if class/year filtered, then populate Students?
-        // OR find Students directly filtered by branch.
-        
-        // If simply listing all students in branch:
+        if (classId) {
+            const cls = await Class.findOne({ _id: classId, tenantId: req.user.tenantId, branchId: req.user.branchId });
+            if (!cls) return sendError(res, 403, 'Access denied for this branch resource.');
+        }
+
         let studentIds = null;
 
         if (classId || academicYearId) {
@@ -574,13 +646,11 @@ exports.getStudents = async (req, res) => {
 
 exports.getStudent = async (req, res) => {
     try {
-        const student = await Student.findOne({
-            _id: req.params.studentId,
-            tenantId: req.user.tenantId,
-            branchId: req.user.branchId
-        });
-        if (!student) return sendError(res, 404, 'Student not found');
-        sendResponse(res, true, student);
+        const studExists = await Student.findOne({ _id: req.params.studentId, tenantId: req.user.tenantId, branchId: req.user.branchId });
+        if (!studExists) {
+            return sendError(res, 403, 'Access denied for this branch resource.');
+        }
+        sendResponse(res, true, studExists);
     } catch (error) {
          console.error('getStudent Error:', error);
          sendError(res, 500, 'Server Error');
@@ -750,102 +820,23 @@ exports.promoteStudents = async (req, res) => {
 
 // --- E) Exams Oversight ---
 
-exports.createExam = async (req, res) => {
-    try {
-        const { classId, name, term, academicYearId, startDate, endDate, teacherUserId } = req.body;
-
-        const newExam = await Exam.create({
-            tenantId: req.user.tenantId,
-            branchId: req.user.branchId,
-            classId,
-            academicYearId,
-            teacherUserId,
-            name,
-            term,
-            startDate,
-            endDate
-        });
-
-        await logAction({
-            tenantId: req.user.tenantId,
-            branchId: req.user.branchId,
-            actorUserId: req.user._id,
-            actorRole: req.user.role,
-            action: 'EXAM_CREATED',
-            entityType: 'Exam',
-            entityId: newExam._id.toString(),
-            after: newExam.toObject(),
-            ip: req.ip,
-            userAgent: req.get('User-Agent')
-        });
-
-        sendResponse(res, true, newExam, 'Exam created');
-    } catch (error) {
-        console.error('createExam Error:', error);
-        sendError(res, 500, 'Server Error');
-    }
-};
-
-exports.getExams = async (req, res) => {
-    try {
-         const { classId, academicYearId, term } = req.query;
-         const query = {
-             tenantId: req.user.tenantId,
-             branchId: req.user.branchId
-         };
-         if (classId) query.classId = classId;
-         if (academicYearId) query.academicYearId = academicYearId;
-         if (term) query.term = term;
-
-         const exams = await Exam.find(query).sort({ createdAt: -1 });
-         sendResponse(res, true, exams);
-    } catch (error) {
-        console.error('getExams Error:', error);
-        sendError(res, 500, 'Server Error');
-    }
-};
-
-exports.updateExamStatus = async (req, res) => {
-    try {
-        const { id } = req.params;
-        const { status } = req.body; // Draft, Published, Locked
-
-        if (!['Draft', 'Published', 'Locked'].includes(status)) {
-            return sendError(res, 400, 'Invalid status');
-        }
-
-        const exam = await Exam.findOneAndUpdate(
-            { _id: id, tenantId: req.user.tenantId, branchId: req.user.branchId },
-            { status },
-            { new: true }
-        );
-
-        if (!exam) return sendError(res, 404, 'Exam not found');
-
-        await logAction({
-            tenantId: req.user.tenantId,
-            branchId: req.user.branchId,
-            actorUserId: req.user._id,
-            actorRole: req.user.role,
-            action: 'EXAM_STATUS_UPDATED',
-            entityType: 'Exam',
-            entityId: exam._id.toString(),
-            after: { status },
-            ip: req.ip,
-            userAgent: req.get('User-Agent')
-        });
-
-        sendResponse(res, true, exam, `Exam status updated to ${status}`);
-    } catch (error) {
-        console.error('updateExamStatus Error:', error);
-        sendError(res, 500, 'Server Error');
-    }
-};
-
 exports.getExamResults = async (req, res) => {
     try {
         const { examId, classId, studentId } = req.query;
-        // Basic filtering for results
+
+        if (examId) {
+            const ex = await Exam.findOne({ _id: examId, tenantId: req.user.tenantId, branchId: req.user.branchId });
+            if (!ex) return sendError(res, 403, 'Access denied for this branch resource.');
+        }
+        if (classId) {
+            const cls = await Class.findOne({ _id: classId, tenantId: req.user.tenantId, branchId: req.user.branchId });
+            if (!cls) return sendError(res, 403, 'Access denied for this branch resource.');
+        }
+        if (studentId) {
+            const stud = await Student.findOne({ _id: studentId, tenantId: req.user.tenantId, branchId: req.user.branchId });
+            if (!stud) return sendError(res, 403, 'Access denied for this branch resource.');
+        }
+
         const query = {
             tenantId: req.user.tenantId,
             branchId: req.user.branchId
@@ -870,6 +861,15 @@ exports.getClassResults = async (req, res) => {
         const { classId, subjectId, academicYearId, term } = req.query;
         if (!classId || !subjectId || !academicYearId) {
             return sendError(res, 400, 'classId, subjectId, and academicYearId are required');
+        }
+
+        if (classId) {
+            const cls = await Class.findOne({ _id: classId, tenantId: req.user.tenantId, branchId: req.user.branchId });
+            if (!cls) return sendError(res, 403, 'Access denied for this branch resource.');
+        }
+        if (subjectId) {
+            const sub = await Subject.findOne({ _id: subjectId, tenantId: req.user.tenantId, branchId: req.user.branchId });
+            if (!sub) return sendError(res, 403, 'Access denied for this branch resource.');
         }
 
         const exams = await Exam.find({
@@ -990,13 +990,12 @@ exports.getStudentResults = async (req, res) => {
         const { studentId, academicYearId, term } = req.query;
         if (!studentId) return sendError(res, 400, 'studentId is required');
 
-        const student = await Student.findOne({
-            _id: studentId,
-            tenantId: req.user.tenantId,
-            branchId: req.user.branchId
-        }).select('firstName lastName admissionNumber studentCode');
+        const studExists = await Student.findOne({ _id: studentId, tenantId: req.user.tenantId, branchId: req.user.branchId });
+        if (!studExists) {
+            return sendError(res, 403, 'Access denied for this branch resource.');
+        }
 
-        if (!student) return sendError(res, 404, 'Student not found');
+        const student = studExists;
 
         const enrollment = await Enrollment.findOne({
             tenantId: req.user.tenantId,
@@ -1327,28 +1326,91 @@ exports.getBranchOverview = async (req, res) => {
         }
 
         // 3. Finance (Invoices & Payments)
-        // Aggregation for outstanding invoices
-        // Note: Invoice/Payment schema wasn't fully checked but assuming tenantId/branchId exists
+        const tenantId = new mongoose.Types.ObjectId(req.user.tenantId);
+        const branchId = new mongoose.Types.ObjectId(req.user.branchId);
+
         const invoiceStats = await Invoice.aggregate([
-            { $match: { ...baseQuery, status: { $ne: 'Void' } } }, // assuming status field
-            { $group: { _id: null, totalSales: { $sum: '$amount' }, count: { $sum: 1 } } }
+            { $match: { tenantId, branchId, status: { $ne: 'Void' } } },
+            { $group: { _id: null, totalSales: { $sum: '$totalAmount' }, count: { $sum: 1 } } }
         ]);
 
         const paymentStats = await Payment.aggregate([
-            { $match: { ...baseQuery } },
+            { $match: { tenantId, branchId, status: 'ACTIVE' } },
             { $group: { _id: null, totalCollected: { $sum: '$amount' } } }
         ]);
-        
-        // 4. Exam Performance (Recent)
-        // Maybe getting average of last 5 exams?
-        // Let's just return placeholders if specific logic isn't strictly defined beyond "exam performance summary"
+
+        // Monthly trend for the last 6 months
+        const sixMonthsAgo = new Date();
+        sixMonthsAgo.setHours(0, 0, 0, 0);
+        sixMonthsAgo.setDate(1);
+        sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 5);
+
+        const invoiceMonthly = await Invoice.aggregate([
+            { 
+                $match: { 
+                    tenantId, 
+                    branchId, 
+                    status: { $ne: 'Void' },
+                    createdAt: { $gte: sixMonthsAgo }
+                } 
+            },
+            {
+                $group: {
+                    _id: {
+                        year: { $year: '$createdAt' },
+                        month: { $month: '$createdAt' }
+                    },
+                    invoiced: { $sum: '$totalAmount' }
+                }
+            }
+        ]);
+
+        const paymentMonthly = await Payment.aggregate([
+            { 
+                $match: { 
+                    tenantId, 
+                    branchId, 
+                    status: 'ACTIVE',
+                    createdAt: { $gte: sixMonthsAgo }
+                } 
+            },
+            {
+                $group: {
+                    _id: {
+                        year: { $year: '$createdAt' },
+                        month: { $month: '$createdAt' }
+                    },
+                    collected: { $sum: '$amount' }
+                }
+            }
+        ]);
+
+        const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+        const trendData = [];
+        for (let i = 5; i >= 0; i--) {
+            const d = new Date();
+            d.setDate(1);
+            d.setMonth(d.getMonth() - i);
+            const mVal = d.getMonth() + 1;
+            const yVal = d.getFullYear();
+
+            const inv = invoiceMonthly.find(item => item._id.year === yVal && item._id.month === mVal);
+            const pay = paymentMonthly.find(item => item._id.year === yVal && item._id.month === mVal);
+
+            trendData.push({
+                month: monthNames[d.getMonth()],
+                Invoiced: inv ? inv.invoiced : 0,
+                Collected: pay ? pay.collected : 0
+            });
+        }
 
         sendResponse(res, true, {
             students: { totalActive: studentCount, enrolledCurrentYear: activeEnrollments },
             finance: {
                 totalInvoiced: invoiceStats[0]?.totalSales || 0,
                 totalCollected: paymentStats[0]?.totalCollected || 0
-            }
+            },
+            financeTrend: trendData
         });
 
     } catch (error) {
@@ -1403,6 +1465,11 @@ exports.createClassCategory = async (req, res) => {
 exports.getSections = async (req, res) => {
     try {
         const { classId } = req.query;
+        if (classId) {
+            const cls = await Class.findOne({ _id: classId, tenantId: req.user.tenantId, branchId: req.user.branchId });
+            if (!cls) return sendError(res, 403, 'Access denied for this branch resource.');
+        }
+
         const query = {
             tenantId: req.user.tenantId,
             branchId: req.user.branchId
@@ -1421,6 +1488,11 @@ exports.createSection = async (req, res) => {
     try {
         const { classId, name, roomNumber, capacity } = req.body;
         if (!classId || !name) return sendError(res, 400, 'Class and Name are required');
+
+        if (classId) {
+            const cls = await Class.findOne({ _id: classId, tenantId: req.user.tenantId, branchId: req.user.branchId });
+            if (!cls) return sendError(res, 403, 'Access denied for this branch resource.');
+        }
 
         const section = await Section.create({
             tenantId: req.user.tenantId,
@@ -1466,6 +1538,9 @@ exports.createSubject = async (req, res) => {
         sendResponse(res, true, subject, 'Subject created');
     } catch (error) {
         console.error('createSubject Error:', error);
+        if (error.code === 11000) {
+            return sendError(res, 409, 'Subject already exists for this branch');
+        }
         sendError(res, 500, 'Server Error');
     }
 };
@@ -1490,6 +1565,11 @@ exports.getAllBranchAssignments = async (req, res) => {
 exports.getClassSubjects = async (req, res) => {
     try {
         const { classId } = req.query;
+        if (classId) {
+            const cls = await Class.findOne({ _id: classId, tenantId: req.user.tenantId, branchId: req.user.branchId });
+            if (!cls) return sendError(res, 403, 'Access denied for this branch resource.');
+        }
+
         const query = {
             tenantId: req.user.tenantId,
             branchId: req.user.branchId
@@ -1512,6 +1592,19 @@ exports.createClassSubject = async (req, res) => {
     try {
         const { classId, sectionId, subjectId, totalMarks, passMarks } = req.body;
         if (!classId || !subjectId) return sendError(res, 400, 'Class and Subject are required');
+
+        if (classId) {
+            const cls = await Class.findOne({ _id: classId, tenantId: req.user.tenantId, branchId: req.user.branchId });
+            if (!cls) return sendError(res, 403, 'Access denied for this branch resource.');
+        }
+        if (sectionId) {
+            const sec = await Section.findOne({ _id: sectionId, tenantId: req.user.tenantId, branchId: req.user.branchId });
+            if (!sec) return sendError(res, 403, 'Access denied for this branch resource.');
+        }
+        if (subjectId) {
+            const sub = await Subject.findOne({ _id: subjectId, tenantId: req.user.tenantId, branchId: req.user.branchId });
+            if (!sub) return sendError(res, 403, 'Access denied for this branch resource.');
+        }
 
         const existing = await ClassSubject.findOne({
             tenantId: req.user.tenantId,
@@ -1542,11 +1635,34 @@ exports.createClassSubject = async (req, res) => {
 
 exports.deleteClassSubject = async (req, res) => {
     try {
-        await ClassSubject.findOneAndDelete({
-            _id: req.params.id,
-            tenantId: req.user.tenantId,
-            branchId: req.user.branchId
-        });
+        const csExists = await ClassSubject.findOne({ _id: req.params.id, tenantId: req.user.tenantId, branchId: req.user.branchId });
+        if (!csExists) {
+            return sendError(res, 403, 'Access denied for this branch resource.');
+        }
+
+        // Before delete, verify class, subject, and section belong to the same tenant and branch
+        const classExists = await Class.findOne({ _id: csExists.classId, tenantId: req.user.tenantId, branchId: req.user.branchId });
+        if (!classExists) {
+            return sendError(res, 403, 'Access denied for this branch resource.');
+        }
+
+        const subjectQuery = { _id: csExists.subjectId, tenantId: req.user.tenantId };
+        if (Subject.schema.paths.branchId) {
+            subjectQuery.branchId = req.user.branchId;
+        }
+        const subjectExists = await Subject.findOne(subjectQuery);
+        if (!subjectExists) {
+            return sendError(res, 403, 'Access denied for this branch resource.');
+        }
+
+        if (csExists.sectionId) {
+            const sectionExists = await Section.findOne({ _id: csExists.sectionId, tenantId: req.user.tenantId, branchId: req.user.branchId });
+            if (!sectionExists) {
+                return sendError(res, 403, 'Access denied for this branch resource.');
+            }
+        }
+
+        await ClassSubject.deleteOne({ _id: req.params.id, tenantId: req.user.tenantId, branchId: req.user.branchId });
         sendResponse(res, true, null, 'Subject removed from class');
     } catch (error) {
         console.error('deleteClassSubject Error:', error);
@@ -1591,6 +1707,15 @@ exports.createExamCategory = async (req, res) => {
 exports.getExams = async (req, res) => {
     try {
         const { classId, academicYearId, subjectId } = req.query;
+        if (classId && classId !== 'all') {
+            const cls = await Class.findOne({ _id: classId, tenantId: req.user.tenantId, branchId: req.user.branchId });
+            if (!cls) return sendError(res, 403, 'Access denied for this branch resource.');
+        }
+        if (subjectId) {
+            const sub = await Subject.findOne({ _id: subjectId, tenantId: req.user.tenantId, branchId: req.user.branchId });
+            if (!sub) return sendError(res, 403, 'Access denied for this branch resource.');
+        }
+
         const query = {
             tenantId: req.user.tenantId,
             branchId: req.user.branchId
@@ -1628,6 +1753,25 @@ exports.createExam = async (req, res) => {
             return sendError(res, 400, 'Required fields missing');
         }
 
+        if (examCategoryId) {
+            const cat = await ExamCategory.findOne({ _id: examCategoryId, tenantId: req.user.tenantId, branchId: req.user.branchId });
+            if (!cat) return sendError(res, 403, 'Access denied for this branch resource.');
+        }
+        if (classId && classId !== 'all') {
+            const cls = await Class.findOne({ _id: classId, tenantId: req.user.tenantId, branchId: req.user.branchId });
+            if (!cls) return sendError(res, 403, 'Access denied for this branch resource.');
+        }
+        if (classIds && Array.isArray(classIds)) {
+            for (const cId of classIds) {
+                const cls = await Class.findOne({ _id: cId, tenantId: req.user.tenantId, branchId: req.user.branchId });
+                if (!cls) return sendError(res, 403, 'Access denied for this branch resource.');
+            }
+        }
+        if (subjectId) {
+            const sub = await Subject.findOne({ _id: subjectId, tenantId: req.user.tenantId, branchId: req.user.branchId });
+            if (!sub) return sendError(res, 403, 'Access denied for this branch resource.');
+        }
+
         const baseData = {
             tenantId: req.user.tenantId,
             branchId: req.user.branchId,
@@ -1659,7 +1803,7 @@ exports.createExam = async (req, res) => {
 
         for (const clsId of targetClassIds) {
             try {
-                const clsDoc = await Class.findById(clsId);
+                const clsDoc = await Class.findOne({ _id: clsId, tenantId: req.user.tenantId, branchId: req.user.branchId });
                 const clsName = clsDoc ? clsDoc.name : clsId;
 
                 // 1. Verify that this subject is assigned in the class curriculum (ClassSubject)
@@ -1668,7 +1812,6 @@ exports.createExam = async (req, res) => {
                     branchId: req.user.branchId,
                     classId: clsId,
                     subjectId: subjectId,
-                    // We check if it's assigned generally for the class, or specifically for the current year
                     $or: [
                         { academicYearId: academicYearId },
                         { academicYearId: { $exists: false } },
@@ -1687,7 +1830,7 @@ exports.createExam = async (req, res) => {
                 createdExams.push(exam);
 
             } catch (err) {
-                const clsDoc = await Class.findById(clsId);
+                const clsDoc = await Class.findOne({ _id: clsId, tenantId: req.user.tenantId, branchId: req.user.branchId });
                 const clsName = clsDoc ? clsDoc.name : clsId;
                 
                 if (err.code === 11000) {
@@ -1729,14 +1872,15 @@ exports.updateExamStatus = async (req, res) => {
             return sendError(res, 400, 'Invalid status');
         }
 
-        const exam = await Exam.findOneAndUpdate(
-            { _id: req.params.id, tenantId: req.user.tenantId, branchId: req.user.branchId },
-            { status },
-            { new: true }
-        );
+        const examExists = await Exam.findOne({ _id: req.params.id, tenantId: req.user.tenantId, branchId: req.user.branchId });
+        if (!examExists) {
+            return sendError(res, 403, 'Access denied for this branch resource.');
+        }
 
-        if (!exam) return sendError(res, 404, 'Exam not found');
-        sendResponse(res, true, exam, `Exam status updated to ${status}`);
+        examExists.status = status;
+        await examExists.save();
+
+        sendResponse(res, true, examExists, `Exam status updated to ${status}`);
     } catch (error) {
         sendError(res, 500, 'Server Error');
     }
@@ -1744,21 +1888,22 @@ exports.updateExamStatus = async (req, res) => {
 
 exports.deleteExam = async (req, res) => {
     try {
-        const exam = await Exam.findOne({ 
-            _id: req.params.id, 
-            tenantId: req.user.tenantId, 
-            branchId: req.user.branchId 
-        });
+        const examExists = await Exam.findOne({ _id: req.params.id, tenantId: req.user.tenantId, branchId: req.user.branchId });
+        if (!examExists) {
+            return sendError(res, 403, 'Access denied for this branch resource.');
+        }
         
-        if (!exam) return sendError(res, 404, 'Exam not found');
-        
-        // Check if results exist
-        const resultsCount = await Result.countDocuments({ examId: exam._id });
+        // Check if results exist under the same tenant/branch context
+        const resultQuery = { examId: examExists._id, tenantId: req.user.tenantId };
+        if (Result.schema.paths.branchId) {
+            resultQuery.branchId = req.user.branchId;
+        }
+        const resultsCount = await Result.countDocuments(resultQuery);
         if (resultsCount > 0) {
             return sendError(res, 400, 'Cannot delete exam with existing results. Remove results first.');
         }
 
-        await Exam.findByIdAndDelete(exam._id);
+        await Exam.deleteOne({ _id: examExists._id, tenantId: req.user.tenantId, branchId: req.user.branchId });
         sendResponse(res, true, null, 'Exam deleted successfully');
     } catch (error) {
         sendError(res, 500, 'Server Error');

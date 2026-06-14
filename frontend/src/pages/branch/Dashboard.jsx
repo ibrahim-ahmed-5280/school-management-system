@@ -44,15 +44,7 @@ const Dashboard = () => {
     const totalCollected = stats?.finance?.totalCollected || 0;
     const collectionPercentage = totalInvoiced > 0 ? Math.round((totalCollected / totalInvoiced) * 100) : 0;
 
-    // Monthly Fee Invoicing vs Collection Trend (derived from actual totals for realistic display)
-    const financeTrendData = [
-        { month: 'Jan', Invoiced: Math.round(totalInvoiced * 0.12), Collected: Math.round(totalCollected * 0.10) },
-        { month: 'Feb', Invoiced: Math.round(totalInvoiced * 0.15), Collected: Math.round(totalCollected * 0.13) },
-        { month: 'Mar', Invoiced: Math.round(totalInvoiced * 0.18), Collected: Math.round(totalCollected * 0.16) },
-        { month: 'Apr', Invoiced: Math.round(totalInvoiced * 0.20), Collected: Math.round(totalCollected * 0.19) },
-        { month: 'May', Invoiced: Math.round(totalInvoiced * 0.20), Collected: Math.round(totalCollected * 0.22) },
-        { month: 'Jun', Invoiced: Math.round(totalInvoiced * 0.15), Collected: Math.round(totalCollected * 0.20) }
-    ];
+    const financeTrendData = stats?.financeTrend || [];
 
     // Student enrollment vs active tracking data
     const studentMetricsData = [

@@ -13,11 +13,68 @@ const Exam = require('../models/Exam');
 const Result = require('../models/Result');
 const Class = require('../models/Class');
 const AuditLog = require('../models/AuditLog');
+const AttendanceSession = require('../models/AttendanceSession');
+const FeeStructure = require('../models/FeeStructure');
+const TeacherAssignment = require('../models/TeacherAssignment');
+const TimetableSlot = require('../models/TimetableSlot');
 const { logActivity } = require('../utils/logger');
 const { login } = require('./authController');
 const { TENANT_ADMIN_CREATABLE_ROLES, assertValidRoleScope } = require('../utils/rolePolicy');
+const {
+    PERMISSION_CATALOG,
+    getPermissionCatalogForRole,
+    getUserPermissionParts,
+    sanitizeAssignablePermissionsForRole
+} = require('../utils/permissions');
+const { generateTemporaryPassword } = require('../utils/passwords');
 
 const ACTIVE_ENROLLMENT_STATUSES = ['Current', 'Active', 'active'];
+const SEPARATE_TENANT_ACCOUNT_ROLES = new Set(['super_admin', 'finance_director']);
+
+// ---- Helper utilities ----
+const serializeUser = (user) => {
+    const raw = typeof user.toObject === 'function' ? user.toObject() : user;
+    delete raw.passwordHash;
+    return raw;
+};
+
+const ensureTenantUser = async (req, userId) => {
+    if (!mongoose.Types.ObjectId.isValid(userId)) {
+        const error = new Error('Invalid user id');
+        error.statusCode = 400;
+        throw error;
+    }
+    const user = await User.findOne({
+        _id: userId,
+        tenantId: req.tenantId,
+        role: { $ne: 'platform_owner' }
+    });
+    if (!user) {
+        const error = new Error('User not found in this institution');
+        error.statusCode = 404;
+        throw error;
+    }
+    return user;
+};
+
+const assertNotLastActiveSuperAdmin = async (req, targetUser, nextIsActive = targetUser.isActive) => {
+    if (targetUser.role !== 'super_admin' || nextIsActive) return;
+    if (targetUser._id.toString() === req.user._id.toString()) {
+        const error = new Error('You cannot deactivate your own super admin account');
+        error.statusCode = 400;
+        throw error;
+    }
+    const activeSuperAdmins = await User.countDocuments({
+        tenantId: req.tenantId,
+        role: 'super_admin',
+        isActive: true
+    });
+    if (activeSuperAdmins <= 1) {
+        const error = new Error('Cannot deactivate the last active school super admin');
+        error.statusCode = 400;
+        throw error;
+    }
+};
 
 // ==========================================
 // A) Branding & Identity
@@ -207,12 +264,27 @@ const assignBranchAdmin = asyncHandler(async (req, res) => {
     const { userId } = req.body;
     const branchId = req.params.branchId;
 
+    // 1. Verify target branch exists and belongs to the same tenant
+    const branch = await Branch.findOne({ _id: branchId, tenantId: req.tenantId });
+    if (!branch) {
+        res.status(404);
+        throw new Error('Target branch not found in this institution');
+    }
+
+    // 2. Verify target branch is active
+    if (branch.isActive === false) {
+        res.status(400);
+        throw new Error('Target branch is inactive');
+    }
+
+    // 3. Verify user exists and belongs to the same tenant
     const user = await User.findOne({ _id: userId, tenantId: req.tenantId });
     if (!user) {
         res.status(404);
         throw new Error('User not found in this institution');
     }
 
+    // 4. Verify user has branch_admin role and branch scope
     if (user.role !== 'branch_admin' || user.scope !== 'branch') {
         res.status(400);
         throw new Error('User must have role branch_admin and scope branch');
@@ -261,8 +333,8 @@ const createUser = asyncHandler(async (req, res) => {
     const normalizedEmail = String(email).trim().toLowerCase();
     const userExists = await User.findOne({ tenantId: req.tenantId, email: normalizedEmail });
     if (userExists) {
-        res.status(400);
-        throw new Error('Email already registered in this institution');
+        res.status(409);
+        throw new Error('Email already exists for this school.');
     }
 
     // Validation for scope/branchId
@@ -334,6 +406,234 @@ const getUsers = asyncHandler(async (req, res) => {
     res.json(users);
 });
 
+const getUserById = asyncHandler(async (req, res) => {
+    const user = await ensureTenantUser(req, req.params.userId);
+    res.json(serializeUser(user));
+});
+
+const updateUser = asyncHandler(async (req, res) => {
+    const targetUser = await ensureTenantUser(req, req.params.userId);
+    const before = serializeUser(targetUser);
+
+    const nextRole = req.body.role ? String(req.body.role).trim().toLowerCase() : targetUser.role;
+    const nextScope = req.body.scope ? String(req.body.scope).trim().toLowerCase() : targetUser.scope;
+    const normalized = assertValidRoleScope(nextRole, nextScope);
+
+    if (!TENANT_ADMIN_CREATABLE_ROLES.has(normalized.role)) {
+        res.status(403);
+        throw new Error('This role cannot be managed by a tenant administrator');
+    }
+    if (
+        normalized.role !== targetUser.role &&
+        (SEPARATE_TENANT_ACCOUNT_ROLES.has(normalized.role) || SEPARATE_TENANT_ACCOUNT_ROLES.has(targetUser.role))
+    ) {
+        res.status(400);
+        throw new Error('School super admin and finance director must remain separate accounts. Create a new account instead of changing this role.');
+    }
+
+    if (Object.prototype.hasOwnProperty.call(req.body, 'name')) {
+        const name = String(req.body.name || '').trim();
+        if (!name) { res.status(400); throw new Error('Name is required'); }
+        targetUser.name = name;
+    }
+
+    if (Object.prototype.hasOwnProperty.call(req.body, 'email')) {
+        const email = String(req.body.email || '').trim().toLowerCase();
+        if (!email) { res.status(400); throw new Error('Email is required'); }
+        const emailExists = await User.findOne({ tenantId: req.tenantId, email, _id: { $ne: targetUser._id } });
+        if (emailExists) { res.status(400); throw new Error('Email already registered in this institution'); }
+        targetUser.email = email;
+    }
+
+    if (normalized.role !== targetUser.role || normalized.scope !== targetUser.scope) {
+        targetUser.role = normalized.role;
+        targetUser.scope = normalized.scope;
+    }
+
+    if (Object.prototype.hasOwnProperty.call(req.body, 'branchId')) {
+        if (normalized.scope === 'branch') {
+            const branch = await Branch.findOne({ _id: req.body.branchId, tenantId: req.tenantId });
+            if (!branch) { res.status(400); throw new Error('Branch not found in this institution'); }
+            targetUser.branchId = req.body.branchId;
+        } else {
+            targetUser.branchId = null;
+        }
+    }
+
+    await targetUser.save();
+
+    await logActivity({
+        req,
+        action: 'USER_UPDATED',
+        entityType: 'User',
+        entityId: targetUser._id.toString(),
+        before,
+        after: serializeUser(targetUser)
+    });
+
+    res.json(serializeUser(targetUser));
+});
+
+const updateUserStatus = asyncHandler(async (req, res) => {
+    const targetUser = await ensureTenantUser(req, req.params.userId);
+
+    if (typeof req.body.isActive !== 'boolean') {
+        res.status(400);
+        throw new Error('isActive boolean is required');
+    }
+
+    await assertNotLastActiveSuperAdmin(req, targetUser, req.body.isActive);
+
+    const before = { isActive: targetUser.isActive };
+    targetUser.isActive = req.body.isActive;
+    await targetUser.save();
+
+    await logActivity({
+        req,
+        action: targetUser.isActive ? 'USER_ACTIVATED' : 'USER_DEACTIVATED',
+        entityType: 'User',
+        entityId: targetUser._id.toString(),
+        before,
+        after: { isActive: targetUser.isActive }
+    });
+
+    res.json({
+        message: `User ${targetUser.isActive ? 'activated' : 'deactivated'} successfully`,
+        user: serializeUser(targetUser)
+    });
+});
+
+const resetUserPassword = asyncHandler(async (req, res) => {
+    const targetUser = await ensureTenantUser(req, req.params.userId);
+    const generated = !req.body.password;
+    const nextPassword = generated ? generateTemporaryPassword() : String(req.body.password);
+
+    if (nextPassword.length < 8) {
+        res.status(400);
+        throw new Error('Password must be at least 8 characters');
+    }
+
+    targetUser.passwordHash = nextPassword;
+    targetUser.mustChangePassword = true;
+    await targetUser.save();
+
+    await logActivity({
+        req,
+        action: 'USER_PASSWORD_RESET',
+        entityType: 'User',
+        entityId: targetUser._id.toString(),
+        after: { mustChangePassword: true }
+    });
+
+    res.json({
+        message: 'Password reset successfully',
+        temporaryPassword: generated ? nextPassword : undefined
+    });
+});
+
+const getPermissionCatalog = asyncHandler(async (req, res) => {
+    res.json(PERMISSION_CATALOG.filter((permission) => !permission.key.startsWith('platform.')));
+});
+
+const getUserPermissions = asyncHandler(async (req, res) => {
+    const targetUser = await ensureTenantUser(req, req.params.userId);
+    const permissionParts = getUserPermissionParts(targetUser);
+    res.json({
+        user: serializeUser(targetUser),
+        catalog: getPermissionCatalogForRole(targetUser.role),
+        ...permissionParts
+    });
+});
+
+const updateUserPermissions = asyncHandler(async (req, res) => {
+    const targetUser = await ensureTenantUser(req, req.params.userId);
+
+    // 1. Require allow and deny to be arrays; malformed payloads must return clean 400 responses.
+    if (!req.body || !Array.isArray(req.body.allow) || !Array.isArray(req.body.deny)) {
+        const error = new Error('allow and deny must be arrays');
+        error.statusCode = 400;
+        throw error;
+    }
+
+    // 2. Validate every requested permission against getPermissionCatalogForRole(targetUser.role) before sanitizing.
+    // Reject unknown and cross-role permissions with 400. Do not silently remove them.
+    const assignableCatalog = getPermissionCatalogForRole(targetUser.role);
+    const assignableKeys = new Set(assignableCatalog.map((permission) => permission.key));
+
+    for (const key of [...req.body.allow, ...req.body.deny]) {
+        if (typeof key !== 'string') {
+            const error = new Error('Permissions must be strings');
+            error.statusCode = 400;
+            throw error;
+        }
+        if (!assignableKeys.has(key)) {
+            const error = new Error(`Permission ${key} is not assignable to role ${targetUser.role}`);
+            error.statusCode = 400;
+            throw error;
+        }
+    }
+
+    // 3. Reject permissions appearing in both allow and deny.
+    const allowSet = new Set(req.body.allow);
+    for (const key of req.body.deny) {
+        if (allowSet.has(key)) {
+            const error = new Error(`Permission ${key} cannot appear in both allow and deny`);
+            error.statusCode = 400;
+            throw error;
+        }
+    }
+
+    const before = getUserPermissionParts(targetUser);
+    const allow = sanitizeAssignablePermissionsForRole(targetUser.role, req.body.allow);
+    const deny = sanitizeAssignablePermissionsForRole(targetUser.role, req.body.deny);
+
+    if (
+        targetUser._id.toString() === req.user._id.toString() &&
+        deny.includes('tenant.users.permissions.update')
+    ) {
+        const error = new Error('You cannot remove your own permission-management access');
+        error.statusCode = 400;
+        throw error;
+    }
+
+    targetUser.permissions = { allow, deny };
+    targetUser.permissionProfile = req.body.permissionProfile || targetUser.permissionProfile || `default_${targetUser.role}`;
+    targetUser.lastPermissionUpdateAt = new Date();
+    targetUser.lastPermissionUpdateBy = req.user._id;
+
+    const simulated = getUserPermissionParts(targetUser);
+    if (
+        targetUser.role === 'super_admin' &&
+        targetUser.isActive &&
+        !simulated.effective.includes('tenant.users.permissions.update')
+    ) {
+        const activeSuperAdmins = await User.countDocuments({
+            tenantId: req.tenantId,
+            role: 'super_admin',
+            isActive: true
+        });
+        if (activeSuperAdmins <= 1) {
+            const error = new Error('Cannot remove permission-management access from the last active super admin');
+            error.statusCode = 400;
+            throw error;
+        }
+    }
+
+    await targetUser.save();
+
+    const after = getUserPermissionParts(targetUser);
+    await logActivity({
+        req,
+        action: 'USER_PERMISSION_UPDATED',
+        entityType: 'User',
+        entityId: targetUser._id.toString(),
+        before,
+        after
+    });
+
+    res.json({ user: serializeUser(targetUser), ...after });
+});
+
 // ==========================================
 // D) Academic Year
 // ==========================================
@@ -390,6 +690,93 @@ const setCurrentYear = asyncHandler(async (req, res) => {
     res.json(year);
 });
 
+const updateAcademicYear = asyncHandler(async (req, res) => {
+    const { name, startDate, endDate } = req.body;
+    if (!name || !startDate || !endDate) {
+        res.status(400);
+        throw new Error('Name, Start Date, and End Date are required');
+    }
+    const year = await AcademicYear.findOne({ _id: req.params.yearId, tenantId: req.tenantId });
+    if (!year) {
+        res.status(404);
+        throw new Error('Academic year not found');
+    }
+
+    const before = { name: year.name, startDate: year.startDate, endDate: year.endDate };
+    year.name = name;
+    year.startDate = startDate;
+    year.endDate = endDate;
+    await year.save();
+
+    await logActivity({
+        req,
+        action: 'ACADEMIC_YEAR_UPDATED',
+        entityType: 'AcademicYear',
+        entityId: year._id.toString(),
+        before,
+        after: { name: year.name, startDate: year.startDate, endDate: year.endDate }
+    });
+
+    res.json(year);
+});
+
+const deleteAcademicYear = asyncHandler(async (req, res) => {
+    const yearId = req.params.yearId;
+    const year = await AcademicYear.findOne({ _id: yearId, tenantId: req.tenantId });
+    if (!year) {
+        res.status(404);
+        throw new Error('Academic year not found');
+    }
+
+    if (year.isCurrent) {
+        res.status(400);
+        throw new Error('Cannot delete the current active academic year');
+    }
+
+    const [
+        hasEnrollments,
+        hasExams,
+        hasInvoices,
+        hasFeeStructures,
+        hasAttendance,
+        hasAssignments,
+        hasTimetable
+    ] = await Promise.all([
+        Enrollment.exists({ tenantId: req.tenantId, academicYearId: yearId }),
+        Exam.exists({ tenantId: req.tenantId, academicYearId: yearId }),
+        Invoice.exists({ tenantId: req.tenantId, academicYearId: yearId }),
+        FeeStructure.exists({ tenantId: req.tenantId, academicYearId: yearId }),
+        AttendanceSession.exists({ academicYearId: yearId }),
+        TeacherAssignment.exists({ tenantId: req.tenantId, academicYearId: yearId }),
+        TimetableSlot.exists({ tenantId: req.tenantId, academicYearId: yearId })
+    ]);
+
+    if (
+        hasEnrollments ||
+        hasExams ||
+        hasInvoices ||
+        hasFeeStructures ||
+        hasAttendance ||
+        hasAssignments ||
+        hasTimetable
+    ) {
+        res.status(400);
+        throw new Error('This academic year has records and cannot be deleted.');
+    }
+
+    await year.deleteOne();
+
+    await logActivity({
+        req,
+        action: 'ACADEMIC_YEAR_DELETED',
+        entityType: 'AcademicYear',
+        entityId: yearId,
+        before: { name: year.name, startDate: year.startDate, endDate: year.endDate }
+    });
+
+    res.json({ message: 'Academic year deleted successfully' });
+});
+
 // ==========================================
 // E) Global Reporting
 // ==========================================
@@ -429,11 +816,89 @@ const getOverviewReport = asyncHandler(async (req, res) => {
         { $group: { _id: null, avgMarks: { $avg: '$marksObtained' }, totalResults: { $count: {} } } }
     ]);
 
+    // 5. Real student counts per branch
+    const branchStats = await Student.aggregate([
+        { $match: { tenantId: new mongoose.Types.ObjectId(tenantId) } },
+        { $group: { _id: '$branchId', count: { $sum: 1 } } }
+    ]);
+
+    const branchDistribution = branchStats.map(bs => ({
+        branchId: bs._id ? bs._id.toString() : 'unassigned',
+        count: bs.count
+    }));
+
+    // 6. Monthly trend for the last 6 months (Tenant-wide)
+    const sixMonthsAgo = new Date();
+    sixMonthsAgo.setHours(0, 0, 0, 0);
+    sixMonthsAgo.setDate(1);
+    sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 5);
+
+    const invoiceMonthly = await Invoice.aggregate([
+        { 
+            $match: { 
+                tenantId: new mongoose.Types.ObjectId(tenantId),
+                ...(branchId ? { branchId: new mongoose.Types.ObjectId(branchId) } : {}),
+                status: { $ne: 'Void' },
+                createdAt: { $gte: sixMonthsAgo }
+            } 
+        },
+        {
+            $group: {
+                _id: {
+                    year: { $year: '$createdAt' },
+                    month: { $month: '$createdAt' }
+                },
+                invoiced: { $sum: '$totalAmount' }
+            }
+        }
+    ]);
+
+    const paymentMonthly = await Payment.aggregate([
+        { 
+            $match: { 
+                tenantId: new mongoose.Types.ObjectId(tenantId),
+                ...(branchId ? { branchId: new mongoose.Types.ObjectId(branchId) } : {}),
+                status: 'ACTIVE',
+                createdAt: { $gte: sixMonthsAgo }
+            } 
+        },
+        {
+            $group: {
+                _id: {
+                    year: { $year: '$createdAt' },
+                    month: { $month: '$createdAt' }
+                },
+                collected: { $sum: '$amount' }
+            }
+        }
+    ]);
+
+    const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const trendData = [];
+    for (let i = 5; i >= 0; i--) {
+        const d = new Date();
+        d.setDate(1);
+        d.setMonth(d.getMonth() - i);
+        const mVal = d.getMonth() + 1;
+        const yVal = d.getFullYear();
+
+        const inv = invoiceMonthly.find(item => item._id && item._id.year === yVal && item._id.month === mVal);
+        const pay = paymentMonthly.find(item => item._id && item._id.year === yVal && item._id.month === mVal);
+
+        trendData.push({
+            month: monthNames[d.getMonth()],
+            Projected: inv ? inv.invoiced : 0,
+            Collected: pay ? pay.collected : 0
+        });
+    }
+
     res.json({
         studentCount,
         activeEnrollments,
         revenue: revenueStats[0] || { totalRevenue: 0, projectedRevenue: 0 },
-        performance: performanceStats[0] || { avgMarks: 0, totalResults: 0 }
+        performance: performanceStats[0] || { avgMarks: 0, totalResults: 0 },
+        branchDistribution,
+        trendData
     });
 });
 
@@ -590,21 +1055,32 @@ const transferStudentBranch = asyncHandler(async (req, res) => {
         tenantId: req.tenantId,
         studentId,
         branchId: fromBranchId,
-        status: 'Current'
+        status: { $in: ['Current', 'Active', 'active'] }
     });
     if (currentEnrollments.length === 0) {
         res.status(400);
         throw new Error('Student has no current enrollment in the source branch');
     }
 
+    const linkedUser = await User.findOne({ tenantId: req.tenantId, studentId, role: 'student' });
+    const originalUserBranchId = linkedUser ? linkedUser.branchId : null;
+
     let newEnroll;
+    let studentUpdated = false;
+    let enrollmentsUpdated = false;
+    let userUpdated = false;
+
     try {
         await Enrollment.updateMany(
             { _id: { $in: currentEnrollments.map((enrollment) => enrollment._id) }, tenantId: req.tenantId },
             { $set: { status: 'Transferred' } }
         );
+        enrollmentsUpdated = true;
+
         student.branchId = toBranchId;
         await student.save();
+        studentUpdated = true;
+
         newEnroll = await Enrollment.create({
             tenantId: req.tenantId,
             branchId: toBranchId,
@@ -613,13 +1089,36 @@ const transferStudentBranch = asyncHandler(async (req, res) => {
             academicYearId,
             status: 'Current'
         });
+
+        if (linkedUser) {
+            await User.updateOne(
+                { _id: linkedUser._id, tenantId: req.tenantId, role: 'student', studentId },
+                { branchId: toBranchId }
+            );
+            userUpdated = true;
+        }
     } catch (error) {
-        student.branchId = fromBranchId;
-        await student.save().catch(() => {});
-        await Enrollment.updateMany(
-            { _id: { $in: currentEnrollments.map((enrollment) => enrollment._id) }, tenantId: req.tenantId },
-            { $set: { status: 'Current' } }
-        ).catch(() => {});
+        if (userUpdated && linkedUser) {
+            await User.updateOne(
+                { _id: linkedUser._id, tenantId: req.tenantId, role: 'student', studentId },
+                { branchId: originalUserBranchId }
+            ).catch(() => {});
+        }
+        if (newEnroll) {
+            await Enrollment.deleteOne({ _id: newEnroll._id }).catch(() => {});
+        }
+        if (studentUpdated) {
+            student.branchId = fromBranchId;
+            await student.save().catch(() => {});
+        }
+        if (enrollmentsUpdated) {
+            for (const originalEnrollment of currentEnrollments) {
+                await Enrollment.updateOne(
+                    { _id: originalEnrollment._id, tenantId: req.tenantId },
+                    { status: originalEnrollment.status }
+                ).catch(() => {});
+            }
+        }
         throw error;
     }
 
@@ -648,29 +1147,72 @@ const getBranchClasses = asyncHandler(async (req, res) => {
 // G) Audit Logs
 // ==========================================
 
-const getAuditLogs = asyncHandler(async (req, res) => {
-    const { branchId, action, from, to } = req.query;
+const getTenantAuditLogs = asyncHandler(async (req, res) => {
+    const page = Math.max(1, Number.parseInt(req.query.page, 10) || 1);
+    const limit = Math.min(100, Math.max(1, Number.parseInt(req.query.limit, 10) || 25));
     const query = { tenantId: req.tenantId };
 
-    if (branchId) query.branchId = branchId;
-    if (action) query.action = action;
-    if (from || to) {
+    if (req.query.action) query.action = req.query.action;
+    if (req.query.actor) {
+        query.$or = [
+            { actorName: { $regex: req.query.actor, $options: 'i' } },
+            { actorEmail: { $regex: req.query.actor, $options: 'i' } }
+        ];
+    }
+    if (req.query.entityType) query.entityType = req.query.entityType;
+    if (req.query.entityId) query.entityId = String(req.query.entityId);
+    if (req.query.from || req.query.to) {
         query.createdAt = {};
-        if (from) query.createdAt.$gte = new Date(from);
-        if (to) query.createdAt.$lte = new Date(to);
+        if (req.query.from) query.createdAt.$gte = new Date(req.query.from);
+        if (req.query.to) query.createdAt.$lte = new Date(req.query.to);
     }
 
-    const logs = await AuditLog.find(query).sort({ createdAt: -1 }).limit(100);
-    res.json(logs);
+    const [logs, total] = await Promise.all([
+        AuditLog.find(query)
+            .sort({ createdAt: -1 })
+            .skip((page - 1) * limit)
+            .limit(limit)
+            .populate('actorUserId', 'name email role'),
+        AuditLog.countDocuments(query)
+    ]);
+
+    const inferActivityType = (action = '') => {
+        const upper = String(action).toUpperCase();
+        if (upper.includes('ERROR') || upper.includes('FAILED') || upper.includes('SUSPEND') || upper.includes('DEACTIVATED')) return 'danger';
+        if (upper.includes('UPDATE') || upper.includes('CHANGED') || upper.includes('SET') || upper.includes('RESET') || upper.includes('ASSIGN')) return 'update';
+        if (upper.includes('WARN')) return 'warning';
+        return 'info';
+    };
+
+    const transformedLogs = logs.map((log) => ({
+        id: log._id,
+        action: log.action,
+        user: log.actorUserId?.name || log.actorName || log.actorRole || 'System',
+        actor: log.actorUserId?.name || log.actorName || log.actorRole || 'System',
+        actorEmail: log.actorUserId?.email || log.actorEmail || '',
+        target: log.entityId ? `${log.entityType} (${log.entityId})` : (log.entityType || 'Unknown'),
+        date: new Date(log.createdAt).toLocaleString(),
+        timestamp: log.createdAt,
+        type: inferActivityType(log.action),
+        actorRole: log.actorRole,
+        entityType: log.entityType,
+        entityId: log.entityId,
+        reason: log.reason,
+        before: log.before,
+        after: log.after
+    }));
+
+    res.json({ logs: transformedLogs, pagination: { page, limit, total, pages: Math.ceil(total / limit) } });
 });
 
 module.exports = {
     login,
     getBranding, updateBranding,
     getBranches, createBranch, updateBranch, toggleBranchStatus, assignBranchAdmin,
-    createUser, getUsers,
-    createAcademicYear, setCurrentYear,
+    createUser, getUsers, getUserById, updateUser, updateUserStatus, resetUserPassword,
+    getPermissionCatalog, getUserPermissions, updateUserPermissions,
+    createAcademicYear, setCurrentYear, updateAcademicYear, deleteAcademicYear,
     getOverviewReport,
     promoteStudents, transferStudentBranch, getBranchClasses,
-    getAuditLogs
+    getTenantAuditLogs
 };

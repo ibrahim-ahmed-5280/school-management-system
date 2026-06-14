@@ -24,6 +24,34 @@ const connectDB = async () => {
         } catch (err) {
             console.warn('[DB MIGRATION] Failed to drop legacy teacher assignment index:', err.message);
         }
+
+        // Drop legacy schoolId indexes for students
+        try {
+            const collection = conn.connection.db.collection('students');
+            const indexes = await collection.indexes();
+            for (const idx of indexes) {
+                if (idx.key && ('schoolId' in idx.key)) {
+                    await collection.dropIndex(idx.name);
+                    console.log(`[DB MIGRATION] Dropped legacy index ${idx.name} from students`);
+                }
+            }
+        } catch (err) {
+            console.warn('[DB MIGRATION] Failed to drop legacy student index:', err.message);
+        }
+
+        // Drop legacy schoolId indexes for users
+        try {
+            const collection = conn.connection.db.collection('users');
+            const indexes = await collection.indexes();
+            for (const idx of indexes) {
+                if (idx.key && ('schoolId' in idx.key)) {
+                    await collection.dropIndex(idx.name);
+                    console.log(`[DB MIGRATION] Dropped legacy index ${idx.name} from users`);
+                }
+            }
+        } catch (err) {
+            console.warn('[DB MIGRATION] Failed to drop legacy user index:', err.message);
+        }
     } catch (error) {
         console.error(`Error: ${error.message}`);
         process.exit(1);

@@ -7,6 +7,7 @@ import {
     Menu, X, Shield, Sparkles, Loader2
 } from 'lucide-react';
 import platformService from '../services/platformService';
+import { API_ORIGIN } from '../services/api';
 
 /* ─── Brand tokens (public / platform only) ─────────────────── */
 const NAVY      = '#1b2a4a';
@@ -21,6 +22,7 @@ const Landing = () => {
     const [stats, setStats] = useState(null);
     const [plans, setPlans] = useState([]);
     const [plansLoading, setPlansLoading] = useState(true);
+    const [platformSettings, setPlatformSettings] = useState({ platformName: 'MadrasaHub', isRegistrationEnabled: true });
 
     useEffect(() => {
         const fn = () => setScrolled(window.scrollY > 16);
@@ -37,7 +39,12 @@ const Landing = () => {
             .then(res => setPlans(res.data || []))
             .catch(() => setPlans([]))
             .finally(() => setPlansLoading(false));
+        platformService.getPublicSettings()
+            .then(res => setPlatformSettings(current => ({ ...current, ...(res.data || {}) })))
+            .catch(() => {});
     }, []);
+
+    const registrationOpen = platformSettings.isRegistrationEnabled !== false;
 
     return (
         <div className="public-page min-h-screen bg-white text-slate-900 overflow-x-hidden">
@@ -53,14 +60,18 @@ const Landing = () => {
                 <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
                     {/* Logo */}
                     <Link to="/" className="flex items-center gap-2.5 group">
-                        <div
-                            className="w-9 h-9 rounded-xl flex items-center justify-center shadow-md group-hover:scale-105 transition-transform"
-                            style={{ background: NAVY }}
-                        >
-                            <GraduationCap size={18} className="text-white" />
-                        </div>
+                        {platformSettings.logoUrl ? (
+                            <img src={platformSettings.logoUrl.startsWith('http') ? platformSettings.logoUrl : `${API_ORIGIN}${platformSettings.logoUrl}`} alt={platformSettings.platformName} className="w-9 h-9 object-contain rounded-xl" />
+                        ) : (
+                            <div
+                                className="w-9 h-9 rounded-xl flex items-center justify-center shadow-md group-hover:scale-105 transition-transform"
+                                style={{ background: NAVY }}
+                            >
+                                <GraduationCap size={18} className="text-white" />
+                            </div>
+                        )}
                         <span className="text-[1.15rem] font-extrabold tracking-tight" style={{ color: NAVY }}>
-                            Madrasa<span style={{ color: BLUE }}>Hub</span>
+                            {platformSettings.platformName}
                         </span>
                     </Link>
 
@@ -82,7 +93,7 @@ const Landing = () => {
                         >
                             Sign In
                         </Link>
-                        <NavCTA to="/register" label="Get Started Free" />
+                        {registrationOpen && <NavCTA to="/register" label="Get Started Free" />}
                     </div>
 
                     {/* Mobile toggle */}
@@ -105,16 +116,22 @@ const Landing = () => {
                         ))}
                         <Link to="/login" onClick={() => setMenuOpen(false)}
                             className="block py-2.5 text-sm font-bold" style={{ color: NAVY }}>
-                            Sign In
+                             Sign In
                         </Link>
-                        <Link
-                            to="/register"
-                            onClick={() => setMenuOpen(false)}
-                            className="block mt-2 text-center py-3 rounded-xl text-sm font-bold text-white shadow-md"
-                            style={{ background: NAVY }}
-                        >
-                            Get Started Free
-                        </Link>
+                        {registrationOpen ? (
+                            <Link
+                                to="/register"
+                                onClick={() => setMenuOpen(false)}
+                                className="block mt-2 text-center py-3 rounded-xl text-sm font-bold text-white shadow-md"
+                                style={{ background: NAVY }}
+                            >
+                                Get Started Free
+                            </Link>
+                        ) : (
+                            <div className="block mt-2 text-center py-3 rounded-xl text-xs font-bold bg-amber-50 text-amber-800 border border-amber-100">
+                                School registration is currently closed.
+                            </div>
+                        )}
                     </div>
                 )}
             </nav>
@@ -145,16 +162,22 @@ const Landing = () => {
                     </h1>
 
                     <p className="text-lg text-slate-500 font-medium leading-relaxed max-w-2xl mx-auto mb-10">
-                        MadrasaHub is a modern all-in-one platform for managing multiple schools — fees, students, teachers, results, and more — all in one secure place.
+                        {platformSettings.platformName} is a modern all-in-one platform for managing multiple schools — fees, students, teachers, results, and more — all in one secure place.
                     </p>
 
                     <div className="flex flex-col sm:flex-row gap-4 justify-center mb-16">
-                        <HeroCTA to="/register" primary label="Get Started Free" icon={<ArrowRight size={17} />} />
+                        {registrationOpen ? (
+                            <HeroCTA to="/register" primary label="Get Started Free" icon={<ArrowRight size={17} />} />
+                        ) : (
+                            <div className="inline-flex items-center justify-center border border-amber-200 bg-amber-50 px-6 py-4 rounded-2xl text-[0.95rem] font-bold text-amber-800 shadow-sm cursor-default">
+                                School registration is currently closed.
+                            </div>
+                        )}
                         <HeroCTA to="/login" label="Sign In to Your Account" />
                     </div>
 
-                    {/* ── Dashboard mockup ── */}
-                    <div className="relative max-w-4xl mx-auto rounded-2xl overflow-hidden border border-slate-200 shadow-[0_30px_80px_rgba(27,42,74,0.15)]">
+                    {/* ── Dashboard mockup — live data preview ── */}
+                    <div className="relative max-w-4xl mx-auto rounded-2xl overflow-hidden border border-slate-200 shadow-[0_30px_80px_rgba(27,42,74,0.15)] bg-white">
                         {/* Window chrome */}
                         <div className="flex items-center justify-between px-5 py-3.5 border-b border-slate-100" style={{ background: NAVY }}>
                             <div className="flex gap-1.5">
@@ -164,23 +187,23 @@ const Landing = () => {
                             </div>
                             <div className="flex items-center gap-2 text-[11px] font-bold text-white/50">
                                 <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                                MadrasaHub · Admin Dashboard
+                                {platformSettings.platformName} · Global Network Console
                             </div>
                             <div className="w-16" />
                         </div>
 
-                        {/* Stat row */}
+                        {/* Stat row using real system stats */}
                         <div className="grid grid-cols-2 md:grid-cols-4 gap-0 text-left divide-x divide-slate-100" style={{ background: '#f7f9ff' }}>
                             {[
-                                { label: 'Students', value: '3,240', trend: '+12%', up: true },
-                                { label: 'Revenue', value: '$92,400', trend: '100%', up: true },
-                                { label: 'Attendance', value: '97.2%', trend: '+2.1%', up: true },
-                                { label: 'Pending', value: '8 Tasks', trend: '!', up: false },
-                            ].map(({ label, value, trend, up }) => (
+                                { label: 'Active Institutions', value: stats ? (stats.activeSchools || 0).toLocaleString() : '0', trend: 'Live' },
+                                { label: 'Total Branches', value: stats ? (stats.totalBranches || 0).toLocaleString() : '0', trend: 'Live' },
+                                { label: 'Students Registered', value: stats ? (stats.totalStudents || 0).toLocaleString() : '0', trend: 'Live' },
+                                { label: 'Active Plans', value: stats ? (stats.activePlans || 0).toLocaleString() : '0', trend: 'Live' },
+                            ].map(({ label, value, trend }) => (
                                 <div key={label} className="p-4">
                                     <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-1">{label}</p>
                                     <p className="text-xl font-extrabold" style={{ color: NAVY }}>{value}</p>
-                                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full mt-1.5 inline-block ${up ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>
+                                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full mt-1.5 inline-block bg-emerald-50 text-emerald-700">
                                         {trend}
                                     </span>
                                 </div>
@@ -190,8 +213,8 @@ const Landing = () => {
                         {/* Progress bars */}
                         <div className="p-5 grid sm:grid-cols-2 gap-5 bg-white border-t border-slate-100">
                             {[
-                                { label: 'Fee Collection Rate', pct: 78, color: NAVY },
-                                { label: 'Student Attendance', pct: 92, color: BLUE },
+                                { label: 'Real-Time System Health', pct: 100, color: NAVY },
+                                { label: 'Active Service Availability', pct: 100, color: BLUE },
                             ].map(({ label, pct, color }) => (
                                 <div key={label}>
                                     <div className="flex justify-between text-[11px] font-bold text-slate-500 mb-1.5">
@@ -207,21 +230,6 @@ const Landing = () => {
                     </div>
                 </div>
             </section>
-
-            {/* ══════════ TRUST BAR ══════════ */}
-            <div className="border-y border-slate-100 py-6 bg-white">
-                <div className="max-w-7xl mx-auto px-6">
-                    <p className="text-center text-[10px] font-extrabold text-slate-300 uppercase tracking-[0.2em] mb-5">Trusted By Schools Worldwide</p>
-                    <div className="flex flex-wrap items-center justify-center gap-8">
-                        {['Al-Nuur Academy','Maanka School','Iftiinka Aqoon','Barwaaqo Institute','Midnimo College'].map(s => (
-                            <div key={s} className="flex items-center gap-2 text-slate-400">
-                                <Building2 size={13} />
-                                <span className="text-[13px] font-semibold">{s}</span>
-                            </div>
-                        ))}
-                    </div>
-                </div>
-            </div>
 
             {/* ══════════ FEATURES ══════════ */}
             <section id="features" className="py-24 bg-white">
@@ -247,8 +255,8 @@ const Landing = () => {
                 </div>
             </section>
 
-            {/* ══════════ WHY MADRASAHUB ══════════ */}
-            <section className="py-24" style={{ background: `linear-gradient(180deg, ${BLUE_LITE} 0%, white 100%)` }}>
+            {/* ══════════ WHY PLATFORM ══════════ */}
+            <section className="py-24 bg-slate-50" style={{ background: `linear-gradient(180deg, ${BLUE_LITE} 0%, white 100%)` }}>
                 <div className="max-w-7xl mx-auto px-6">
                     <div className="grid lg:grid-cols-2 gap-16 items-center">
                         <div>
@@ -256,14 +264,14 @@ const Landing = () => {
                                 className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full text-[0.7rem] font-bold tracking-widest uppercase mb-6 border"
                                 style={{ background: BLUE_LITE, color: BLUE, borderColor: BLUE_SOFT }}
                             >
-                                <TrendingUp size={11} /> Why MadrasaHub
+                                <TrendingUp size={11} /> Why {platformSettings.platformName}
                             </div>
                             <h2 className="text-3xl sm:text-4xl font-extrabold tracking-tight mb-5 leading-tight" style={{ color: NAVY }}>
                                 Fast, Secure &<br />
                                 <span style={{ color: BLUE }}>Built for Schools</span>
                             </h2>
                             <p className="text-slate-500 font-medium leading-relaxed mb-8 text-base">
-                                MadrasaHub is built on the principle that school administrators deserve full control — without needing any technical expertise.
+                                {platformSettings.platformName} is built on the principle that school administrators deserve full control — without needing any technical expertise.
                             </p>
                             <div className="space-y-3.5">
                                 {[
@@ -284,10 +292,10 @@ const Landing = () => {
                         {/* Stat grid — live from API */}
                         <div className="grid grid-cols-2 gap-5">
                             {[
-                                { valueKey: 'totalTenants',  fallback: '—',    label: 'Schools Managed',    icon: <Building2 size={20} /> },
-                                { valueKey: null,            fallback: '98%',  label: 'Satisfaction Rate',  icon: <Star size={20} /> },
-                                { valueKey: 'totalStudents', fallback: '—',    label: 'Total Students',     icon: <GraduationCap size={20} /> },
-                                { valueKey: null,            fallback: '24/7', label: 'Support',            icon: <Globe size={20} /> },
+                                { valueKey: 'totalSchools',   fallback: '0',  label: 'Schools Registered',    icon: <Building2 size={20} /> },
+                                { valueKey: 'activeSchools',  fallback: '0',  label: 'Active Schools',        icon: <Star size={20} /> },
+                                { valueKey: 'totalStudents',  fallback: '0',  label: 'Total Students',        icon: <GraduationCap size={20} /> },
+                                { valueKey: 'totalBranches',  fallback: '0',  label: 'Branches Created',      icon: <Globe size={20} /> },
                             ].map(({ valueKey, fallback, label, icon }) => {
                                 const live = valueKey && stats ? stats[valueKey] : null;
                                 const display = live !== null && live !== undefined
@@ -349,19 +357,15 @@ const Landing = () => {
                                         desc={plan.maxBranches === 'Unlimited' ? 'For large institutions' : plan.maxBranches <= 1 ? 'For small schools getting started' : 'For growing schools'}
                                         featured={featured}
                                         features={features}
+                                        registrationOpen={registrationOpen}
                                     />
                                 );
                             })}
                         </div>
                     ) : (
-                        // Fallback if API fails
-                        <div className="grid md:grid-cols-3 gap-6 mt-12">
-                            <PricingCard name="Starter" price="$0" desc="For small schools getting started"
-                                features={['1 Branch', '100 Students', 'Basic Reports', 'Email Support']} />
-                            <PricingCard name="Professional" price="$49" desc="For growing schools" featured
-                                features={['10 Branches', '2,000 Students', 'Full Reports', 'Payroll & HR', 'Priority Support 24/7']} />
-                            <PricingCard name="Enterprise" price="Contact Us" desc="For large institutions"
-                                features={['Unlimited Branches', 'Unlimited Students', 'Custom Branding', 'Dedicated Server', 'Dedicated Support']} />
+                        // Fallback if API returns empty
+                        <div className="text-center py-12 text-slate-400 font-semibold text-sm">
+                            No active subscription plans available at this moment.
                         </div>
                     )}
                 </div>
@@ -378,20 +382,26 @@ const Landing = () => {
                         Ready to Get Started?
                     </div>
                     <h2 className="text-4xl sm:text-5xl font-extrabold tracking-tight text-white mb-5 leading-tight">
-                        Start Today.<br />It's Free.
+                        Start Today.
                     </h2>
                     <p className="text-white/60 text-lg font-medium mb-10 max-w-xl mx-auto">
-                        Join thousands of schools that have transformed the way they manage education with MadrasaHub.
+                        Register your school for platform review and choose the active plan that fits your current needs.
                     </p>
                     <div className="flex flex-col sm:flex-row gap-4 justify-center">
-                        <Link
-                            to="/register"
-                            className="inline-flex items-center justify-center gap-2 px-8 py-4 rounded-2xl text-[0.95rem] font-bold text-white transition-all hover:-translate-y-0.5 active:translate-y-0 shadow-lg"
-                            style={{ background: BLUE }}
-                        >
-                            Get Started Free
-                            <ArrowRight size={17} />
-                        </Link>
+                        {registrationOpen ? (
+                            <Link
+                                to="/register"
+                                className="inline-flex items-center justify-center gap-2 px-8 py-4 rounded-2xl text-[0.95rem] font-bold text-white transition-all hover:-translate-y-0.5 active:translate-y-0 shadow-lg"
+                                style={{ background: BLUE }}
+                            >
+                                Get Started Free
+                                <ArrowRight size={17} />
+                            </Link>
+                        ) : (
+                            <div className="inline-flex items-center justify-center rounded-2xl text-[0.95rem] font-bold bg-white/10 text-white/80 border border-white/20 px-8 py-4 cursor-default">
+                                School registration is currently closed.
+                            </div>
+                        )}
                         <Link
                             to="/login"
                             className="inline-flex items-center justify-center border-2 px-8 py-4 rounded-2xl text-[0.95rem] font-bold text-white hover:bg-white/10 transition-all"
@@ -409,10 +419,14 @@ const Landing = () => {
                     <div className="flex flex-col md:flex-row items-start justify-between gap-10 mb-12">
                         <div className="max-w-xs">
                             <div className="flex items-center gap-2.5 mb-4">
-                                <div className="w-8 h-8 rounded-xl flex items-center justify-center" style={{ background: BLUE }}>
-                                    <GraduationCap size={16} className="text-white" />
-                                </div>
-                                <span className="text-lg font-extrabold text-white">MadrasaHub</span>
+                                {platformSettings.logoUrl ? (
+                                    <img src={platformSettings.logoUrl.startsWith('http') ? platformSettings.logoUrl : `${API_ORIGIN}${platformSettings.logoUrl}`} alt={platformSettings.platformName} className="w-8 h-8 object-contain rounded-xl" />
+                                ) : (
+                                    <div className="w-8 h-8 rounded-xl flex items-center justify-center" style={{ background: BLUE }}>
+                                        <GraduationCap size={16} className="text-white" />
+                                    </div>
+                                )}
+                                <span className="text-lg font-extrabold text-white">{platformSettings.platformName}</span>
                             </div>
                             <p className="text-sm leading-relaxed font-medium text-slate-400">
                                 The leading multi-school management platform — modern, secure, and easy to use.
@@ -432,14 +446,16 @@ const Landing = () => {
                                 <p className="font-extrabold text-white uppercase tracking-widest text-[11px] mb-4">Account</p>
                                 <div className="space-y-2.5 text-slate-400">
                                     <Link to="/login" className="block hover:text-white transition-colors font-medium">Sign In</Link>
-                                    <Link to="/register" className="block hover:text-white transition-colors font-medium">Register School</Link>
+                                    {registrationOpen && <Link to="/register" className="block hover:text-white transition-colors font-medium">Register School</Link>}
                                     <Link to="/platform/login" className="block hover:text-white transition-colors font-medium">Platform Admin</Link>
                                 </div>
                             </div>
                             <div>
                                 <p className="font-extrabold text-white uppercase tracking-widest text-[11px] mb-4">Contact</p>
                                 <div className="space-y-2.5 text-slate-400">
-                                    <a href="mailto:support@madrasahub.com" className="block hover:text-white transition-colors font-medium">Support</a>
+                                    {platformSettings.supportEmail && (
+                                        <a href={`mailto:${platformSettings.supportEmail}`} className="block hover:text-white transition-colors font-medium">Support</a>
+                                    )}
                                     <a href="#" className="block hover:text-white transition-colors font-medium">Contact Us</a>
                                 </div>
                             </div>
@@ -447,7 +463,7 @@ const Landing = () => {
                     </div>
                     <div className="border-t border-white/10 pt-8 flex flex-col sm:flex-row items-center justify-between gap-4">
                         <p className="text-sm font-medium text-slate-500">
-                            © {new Date().getFullYear()} MadrasaHub · All Rights Reserved
+                            © {new Date().getFullYear()} {platformSettings.platformName} · All Rights Reserved
                         </p>
                         <div className="flex items-center gap-2 text-xs font-bold text-slate-600">
                             <Globe size={12} />
@@ -516,7 +532,7 @@ const FeatureCard = ({ icon, title, desc }) => (
     </div>
 );
 
-const PricingCard = ({ name, price, desc, features, featured }) => (
+const PricingCard = ({ name, price, desc, features, featured, registrationOpen }) => (
     <div
         className={`rounded-2xl p-8 border flex flex-col transition-all duration-200 ${
             featured
@@ -548,17 +564,23 @@ const PricingCard = ({ name, price, desc, features, featured }) => (
                 </li>
             ))}
         </ul>
-        <Link
-            to="/register"
-            className="block w-full text-center py-3 rounded-xl font-bold text-[0.88rem] transition-all hover:-translate-y-0.5 active:translate-y-0"
-            style={
-                featured
-                    ? { background: BLUE, color: '#fff', boxShadow: `0 6px 20px rgba(68,119,245,0.4)` }
-                    : { background: BLUE_LITE, color: NAVY }
-            }
-        >
-            {price === 'Contact Us' ? 'Contact Sales' : 'Get Started'}
-        </Link>
+        {registrationOpen ? (
+            <Link
+                to="/register"
+                className="block w-full text-center py-3 rounded-xl font-bold text-[0.88rem] transition-all hover:-translate-y-0.5 active:translate-y-0"
+                style={
+                    featured
+                        ? { background: BLUE, color: '#fff', boxShadow: `0 6px 20px rgba(68,119,245,0.4)` }
+                        : { background: BLUE_LITE, color: NAVY }
+                }
+            >
+                {price === 'Contact Us' ? 'Contact Sales' : 'Get Started'}
+            </Link>
+        ) : (
+            <div className="block w-full text-center py-3 rounded-xl font-bold text-[0.88rem] bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed">
+                Closed
+            </div>
+        )}
     </div>
 );
 
