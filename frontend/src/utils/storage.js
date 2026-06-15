@@ -1,4 +1,5 @@
 const USER_KEY = 'user';
+const TEACHER_BRANCH_KEY = 'teacherBranchId';
 
 export const getStoredUser = () => {
   const raw = localStorage.getItem(USER_KEY);
@@ -17,7 +18,13 @@ export const setStoredUser = (user) => {
 
 export const clearStoredUser = () => {
   localStorage.removeItem(USER_KEY);
+  localStorage.removeItem(TEACHER_BRANCH_KEY);
 };
 
 export const getStoredToken = () => getStoredUser()?.token || '';
+export const getStoredTeacherBranchId = () => localStorage.getItem(TEACHER_BRANCH_KEY) || '';
+export const setStoredTeacherBranchId = (branchId) => {
+  if (branchId) localStorage.setItem(TEACHER_BRANCH_KEY, branchId);
+  else localStorage.removeItem(TEACHER_BRANCH_KEY);
+};
 

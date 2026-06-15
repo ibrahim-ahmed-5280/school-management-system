@@ -5,6 +5,42 @@ import { Card, Button, Input, Select } from '../../components/ui';
 import { ArrowLeft, User, Users, CheckCircle } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
+const unwrapList = (response) => {
+    const payload = response?.data?.data ?? response?.data ?? response;
+    return Array.isArray(payload) ? payload : [];
+};
+
+const periodConfig = {
+    YEARLY: { count: 1, label: 'Annual' },
+    MONTHLY: { count: 12, label: 'Month' },
+    EVERY_TWO_MONTHS: { count: 6, label: 'Two-month period' },
+    QUARTERLY: { count: 4, label: 'Quarter' },
+    TERM: { count: 3, label: 'Term' }
+};
+
+const getStructurePeriods = (structure) => {
+    if (!structure) return [];
+    const frequency = structure.billingFrequency || 'YEARLY';
+    if (frequency === 'CUSTOM') {
+        return (structure.billingPeriods || []).map((period, index) => ({
+            label: `${period.label} ($${Number(period.amount || 0).toLocaleString()})`,
+            value: period.key || `CUSTOM_${index + 1}`
+        }));
+    }
+    const config = periodConfig[frequency] || periodConfig.YEARLY;
+    const totalCents = Math.round(Number(structure.totalAmount || 0) * 100);
+    const base = Math.floor(totalCents / config.count);
+    const remainder = totalCents - (base * config.count);
+    return Array.from({ length: config.count }, (_, index) => {
+        const amount = (base + (index < remainder ? 1 : 0)) / 100;
+        const label = frequency === 'YEARLY' ? config.label : `${config.label} ${index + 1}`;
+        return {
+            label: `${label} ($${amount.toLocaleString()})`,
+            value: frequency === 'YEARLY' ? 'YEARLY' : `${frequency}_${index + 1}`
+        };
+    });
+};
+
 const InvoiceGenerate = () => {
     const navigate = useNavigate();
     const [mode, setMode] = useState('class'); // 'class' or 'student'
@@ -23,6 +59,7 @@ const InvoiceGenerate = () => {
         academicYearId: '',
         targetId: '', // classId or studentId
         feeStructureId: '',
+        billingPeriodKey: '',
         dueDate: ''
     });
 
@@ -37,9 +74,9 @@ const InvoiceGenerate = () => {
                 getAcademicYears(),
                 fetchFeeStructures()
             ]);
-            setBranches(b.map(i => ({ label: i.name, value: i._id })));
-            setYears(y.map(i => ({ label: i.name, value: i._id })));
-            setStructures(Array.isArray(fs) ? fs : (fs.data || []));
+            setBranches(unwrapList(b).map(i => ({ label: i.name, value: i._id })));
+            setYears(unwrapList(y).map(i => ({ label: i.name, value: i._id })));
+            setStructures(unwrapList(fs));
         } catch (e) {
             console.error(e);
         }
@@ -57,7 +94,7 @@ const InvoiceGenerate = () => {
                     branchId: formData.branchId,
                     academicYearId: formData.academicYearId
                 });
-                setClasses(data.map(c => ({ label: c.name, value: c._id })));
+                setClasses(unwrapList(data).map(c => ({ label: c.name, value: c._id })));
             } catch (e) {
                 console.warn('Failed to load branch classes', e);
                 setClasses([]);
@@ -74,7 +111,8 @@ const InvoiceGenerate = () => {
                 branchId: formData.branchId,
                 academicYearId: formData.academicYearId,
                 dueDate: formData.dueDate,
-                feeStructureId: formData.feeStructureId
+                feeStructureId: formData.feeStructureId,
+                billingPeriodKey: formData.billingPeriodKey
             };
             if (mode === 'class') {
                 payload.classId = formData.targetId;
@@ -86,7 +124,7 @@ const InvoiceGenerate = () => {
             setSuccess(true);
         } catch (e) {
             console.error(e);
-            alert('Generation Failed: ' + (e.message || 'Unknown Error'));
+            alert('Generation Failed: ' + (e.response?.data?.message || e.message || 'Unknown Error'));
         } finally {
             setLoading(false);
         }
@@ -110,12 +148,15 @@ const InvoiceGenerate = () => {
 
     const filteredStructures = (structures || []).filter(s => 
         (!formData.branchId || s.branchId === formData.branchId || (s.branchId && s.branchId._id === formData.branchId)) &&
-        (!formData.academicYearId || s.academicYearId === formData.academicYearId || (s.academicYearId && s.academicYearId._id === formData.academicYearId))
+        (!formData.academicYearId || s.academicYearId === formData.academicYearId || (s.academicYearId && s.academicYearId._id === formData.academicYearId)) &&
+        (mode !== 'class' || !formData.targetId || s.classId === formData.targetId || (s.classId && s.classId._id === formData.targetId))
     );
     const structureOptions = filteredStructures.map(s => ({ 
-        label: `${s.name} ($${(s.feeItems || []).reduce((a,c)=>a+(c.amount||0),0)})`, 
+        label: `${s.name || 'Standard Fee Structure'} ($${(s.feeItems || []).reduce((a,c)=>a+(c.amount||0),0)})`,
         value: s._id 
     }));
+    const selectedStructure = structures.find(structure => structure._id === formData.feeStructureId);
+    const billingPeriodOptions = getStructurePeriods(selectedStructure);
 
     return (
         <div className="max-w-2xl mx-auto space-y-6">
@@ -189,7 +230,24 @@ const InvoiceGenerate = () => {
                         label="Fee Structure to Apply"
                         options={structureOptions}
                         value={formData.feeStructureId}
-                        onChange={e => setFormData({...formData, feeStructureId: e.target.value})}
+                        onChange={e => {
+                            const nextStructure = structures.find(structure => structure._id === e.target.value);
+                            const periods = getStructurePeriods(nextStructure);
+                            setFormData({
+                                ...formData,
+                                feeStructureId: e.target.value,
+                                billingPeriodKey: periods.length === 1 ? periods[0].value : ''
+                            });
+                        }}
+                        required
+                    />
+
+                    <Select
+                        label="Billing Period"
+                        options={billingPeriodOptions}
+                        value={formData.billingPeriodKey}
+                        onChange={e => setFormData({ ...formData, billingPeriodKey: e.target.value })}
+                        disabled={!formData.feeStructureId}
                         required
                     />
 
@@ -202,7 +260,7 @@ const InvoiceGenerate = () => {
                     />
 
                     <div className="pt-4">
-                        <Button type="submit" className="w-full py-3 text-lg" disabled={loading}>
+                        <Button type="submit" className="w-full py-3 text-lg" disabled={loading || !formData.billingPeriodKey}>
                             {loading ? 'Processing...' : 'Generate Invoices'}
                         </Button>
                     </div>

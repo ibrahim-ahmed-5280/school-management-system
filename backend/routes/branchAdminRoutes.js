@@ -20,6 +20,7 @@ const timetableController = require('../controllers/timetableController');
 const { protect, authorize, requireScope, tenantGuard, branchGuard } = require('../middleware/auth');
 const { requirePermission } = require('../middleware/permissions');
 const { enforcePlanLimit } = require('../services/planLimitService');
+const { getTerms } = require('../controllers/academicPolicyController');
 
 // Apply Global Middleware for Branch Admin
 // Must be: Authenticated -> Branch Admin Role -> Branch Scope -> Tenant Valid -> Branch Valid
@@ -53,6 +54,7 @@ router.post('/class-subjects', requirePermission('branch.subjects.manage'), requ
 router.delete('/class-subjects/:id', requirePermission('branch.subjects.manage'), require('../controllers/branchAdminController').deleteClassSubject);
 
 router.get('/academic-years/current', getCurrentAcademicYear);
+router.get('/academic-years/:yearId/terms', requirePermission('branch.exams.view'), getTerms);
 
 // --- B.1) Timetable Management ---
 router.post('/timetable/slots', requirePermission('branch.timetable.manage'), timetableController.createTimetableSlot);

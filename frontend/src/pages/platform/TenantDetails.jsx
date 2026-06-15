@@ -265,7 +265,7 @@ const TenantDetails = () => {
                             </div>
                             <h3 className="font-extrabold text-lg mb-1">Subscription Plan</h3>
                             <p className="text-white/55 text-sm font-medium">
-                                {tenant.plan} tier — currently active
+                                {tenant.plan} tier · {tenant.subscription?.billingCycle || 'monthly'} billing
                             </p>
                         </div>
                         <div className="px-6 py-5 bg-white space-y-4">
@@ -281,9 +281,13 @@ const TenantDetails = () => {
                                 max={tenant.usage?.maxStudents?.toLocaleString() || '∞'}
                                 pct={studentPct}
                             />
-                            <button className="w-full mt-2 py-2.5 rounded-xl text-sm font-bold border-2 hover:bg-slate-50 transition"
+                            <div className="pt-2 border-t border-slate-100 text-xs space-y-1">
+                                <p className="flex justify-between gap-3"><span className="text-slate-500">Billing status</span><strong className="capitalize">{tenant.subscription?.status || 'pending'}</strong></p>
+                                <p className="flex justify-between gap-3"><span className="text-slate-500">Billing email</span><strong className="truncate max-w-40">{tenant.billingContactEmail || tenant.admin?.email || 'Not set'}</strong></p>
+                            </div>
+                            <button onClick={() => navigate('/platform/billing')} className="w-full mt-2 py-2.5 rounded-xl text-sm font-bold border-2 hover:bg-slate-50 transition"
                                 style={{ borderColor: NAVY, color: NAVY }}>
-                                Upgrade Plan
+                                Open Billing
                             </button>
                         </div>
                     </div>

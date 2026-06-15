@@ -37,6 +37,12 @@ const tenantService = {
   updateAcademicYear: (id, data) => api.put(`/tenant/academic-years/${id}`, data),
   deleteAcademicYear: (id) => api.delete(`/tenant/academic-years/${id}`),
   setCurrentYear: (id) => api.patch(`/tenant/academic-years/${id}/set-current`),
+  getAcademicPolicy: () => api.get('/tenant/academic-policy'),
+  updateAcademicPolicy: (data) => api.put('/tenant/academic-policy', data),
+  getTerms: (yearId) => api.get(`/tenant/academic-years/${yearId}/terms`),
+  createTerm: (yearId, data) => api.post(`/tenant/academic-years/${yearId}/terms`, data),
+  updateTerm: (termId, data) => api.put(`/tenant/terms/${termId}`, data),
+  deleteTerm: (termId) => api.delete(`/tenant/terms/${termId}`),
 
   // Reports
   getOverviewReport: (branchId = '', academicYearId = '') => 

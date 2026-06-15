@@ -6,11 +6,12 @@ const mongoose = require('mongoose');
 const User = require('../models/User');
 const Student = require('../models/Student');
 const { createNotification } = require('./notificationService');
+const { resolveBillingPeriod } = require('../utils/billingPeriods');
 
 /**
  * Service to handle bulk invoice generation logic
  */
-const generateBulkInvoices = async ({ tenantId, branchId, academicYearId, classId, studentId, dueDate }) => {
+const generateBulkInvoices = async ({ tenantId, branchId, academicYearId, classId, studentId, feeStructureId, billingPeriodKey, dueDate }) => {
     const query = { tenantId, academicYearId };
     if (branchId) query.branchId = branchId;
     if (classId) query.classId = classId;
@@ -25,21 +26,9 @@ const generateBulkInvoices = async ({ tenantId, branchId, academicYearId, classI
 
     for (const enrollment of enrollments) {
         try {
-            // Check if invoice already exists
-            const existing = await Invoice.findOne({
-                tenantId,
-                branchId: enrollment.branchId,
-                studentId: enrollment.studentId,
-                academicYearId
-            });
-
-            if (existing) {
-                skippedCount++;
-                continue; // Skip if already invoiced for this year
-            }
-
             // Get fee structure for this class/branch
             const feeStructure = await FeeStructure.findOne({
+                ...(feeStructureId ? { _id: feeStructureId } : {}),
                 tenantId,
                 branchId: enrollment.branchId,
                 classId: enrollment.classId,
@@ -51,15 +40,32 @@ const generateBulkInvoices = async ({ tenantId, branchId, academicYearId, classI
                 continue; // No fee structure defined for this class
             }
 
+            const billingPeriod = resolveBillingPeriod(feeStructure, billingPeriodKey);
+            const existing = await Invoice.findOne({
+                tenantId,
+                branchId: enrollment.branchId,
+                studentId: enrollment.studentId,
+                academicYearId,
+                billingPeriodKey: billingPeriod.key
+            });
+
+            if (existing) {
+                skippedCount++;
+                continue;
+            }
+
             // Create Invoice
             await Invoice.create({
                 tenantId,
                 branchId: enrollment.branchId,
                 studentId: enrollment.studentId,
                 academicYearId,
-                items: feeStructure.feeItems,
-                totalAmount: feeStructure.totalAmount,
-                balance: feeStructure.totalAmount,
+                feeStructureId: feeStructure._id,
+                billingPeriodKey: billingPeriod.key,
+                billingPeriodLabel: billingPeriod.label,
+                items: billingPeriod.items,
+                totalAmount: billingPeriod.amount,
+                balance: billingPeriod.amount,
                 dueDate: dueDate ? new Date(dueDate) : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
                 status: 'UNPAID'
             });
@@ -72,7 +78,7 @@ const generateBulkInvoices = async ({ tenantId, branchId, academicYearId, classI
                         tenantId,
                         recipientId: studentUser._id,
                         title: `School Fee Invoice Generated`,
-                        message: `An invoice of $${feeStructure.totalAmount} has been generated for your school fees.`,
+                        message: `A ${billingPeriod.label} invoice of $${billingPeriod.amount} has been generated for your school fees.`,
                         type: 'Invoice'
                     });
                 }
@@ -85,7 +91,7 @@ const generateBulkInvoices = async ({ tenantId, branchId, academicYearId, classI
                         tenantId,
                         recipientId: parentUser._id,
                         title: `Fee Invoice Alert: ${studentName}`,
-                        message: `An invoice of $${feeStructure.totalAmount} has been generated for ${studentName}'s school fees.`,
+                        message: `A ${billingPeriod.label} invoice of $${billingPeriod.amount} has been generated for ${studentName}'s school fees.`,
                         type: 'Invoice'
                     });
                 }

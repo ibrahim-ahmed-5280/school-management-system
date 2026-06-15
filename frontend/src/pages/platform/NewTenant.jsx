@@ -51,6 +51,7 @@ const NewTenant = () => {
         name: '',
         domain: '',
         plan: 'basic',
+        billingCycle: 'monthly',
         adminEmail: '',
         adminName: '',
         adminPassword: '',
@@ -196,6 +197,15 @@ const NewTenant = () => {
                                     </button>
                                 ))}
                             </div>
+                        </div>
+
+                        <div>
+                            <FieldLabel>Billing Cycle</FieldLabel>
+                            <select value={formData.billingCycle} onChange={e => set('billingCycle', e.target.value)}
+                                className="w-full h-11 px-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-semibold text-slate-800 outline-none focus:ring-2 focus:ring-[#4477f5]/20 focus:border-[#4477f5] transition">
+                                <option value="monthly">Monthly billing</option>
+                                <option value="yearly">Yearly billing</option>
+                            </select>
                         </div>
 
                         {/* Branding */}

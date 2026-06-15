@@ -9,6 +9,7 @@ const Enrollment = require('../models/Enrollment');
 const ClassSubject = require('../models/ClassSubject');
 const Exam = require('../models/Exam');
 const AttendanceSession = require('../models/AttendanceSession');
+const { resolvePassMarkPercent } = require('../utils/grading');
 
 const sendResponse = (res, success, data = null, message = '') => {
     return res.json({ success, message, data });
@@ -390,7 +391,7 @@ const getStudentRank = async (req, res) => {
             if (!subjectMetaMap.has(subjectId)) {
                 subjectMetaMap.set(subjectId, {
                     subjectId,
-                    passMarkPercent: c.passMarkPercent || 40
+                    passMarkPercent: resolvePassMarkPercent(c)
                 });
             }
         });

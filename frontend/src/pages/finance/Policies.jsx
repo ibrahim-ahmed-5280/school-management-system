@@ -50,12 +50,12 @@ const Policies = () => {
                 </div>
             </div>
 
-            <Card title="Automated Rules Engine">
+            <Card title="Invoice Generation Policy">
                 <div className="space-y-8">
                     <div className="flex items-center justify-between p-5 bg-slate-50 rounded-xl border border-slate-100">
                         <div>
                             <p className="font-bold text-slate-900 text-lg">Auto-Invoice Mode</p>
-                            <p className="text-sm text-slate-500 mt-1 max-w-md">Automatically generate reusable invoices for all active enrollments at the start of each billing cycle.</p>
+                            <p className="text-sm text-slate-500 mt-1 max-w-md">Record when your finance team expects invoices to be generated. Invoice generation remains a reviewed finance action.</p>
                         </div>
                         <select 
                             className="bg-slate-100 border-none rounded-lg px-4 py-2 font-medium text-slate-700 focus:ring-2 focus:ring-[var(--primary)] outline-none"

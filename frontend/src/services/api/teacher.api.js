@@ -29,6 +29,7 @@ export const getGradingPolicy = () => http.get('/teacher/grading-policy').then(r
 export const getStudents = (params) => http.get('/teacher/students', { params }).then(res => res.data);
 
 // Assignments
+export const getAuthorizedBranches = () => http.get('/teacher/branches').then(res => res.data);
 export const getTeacherAssignments = (academicYearId) => 
     http.get('/teacher/assignments', { params: { academicYearId } }).then(res => res.data);
 

@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { getInvoice } from '../../services/api/finance.api';
 import { Card, Button, Badge } from '../../components/ui';
-import { ArrowLeft, Printer, Mail } from 'lucide-react';
+import { ArrowLeft, Printer } from 'lucide-react';
 
 const InvoiceDetails = () => {
     const { invoiceId } = useParams();
@@ -40,6 +40,7 @@ const InvoiceDetails = () => {
                 <div>
                     <h1 className="text-3xl font-black text-slate-900">Invoice #{invoice._id.slice(-6)}</h1>
                     <p className="text-slate-500 mt-1">Issued on {new Date(invoice.createdAt).toLocaleDateString()}</p>
+                    <p className="text-slate-600 mt-1 font-medium">{invoice.billingPeriodLabel || 'Annual'} billing period</p>
                 </div>
                 <div className="flex gap-2">
                     <Button variant="outline" className="flex items-center gap-2" onClick={() => window.print()}>
@@ -118,17 +119,6 @@ const InvoiceDetails = () => {
                                 </div>
                             ))}
                          </div>
-                    </Card>
-
-                    <Card className="bg-slate-900 !border-slate-800 text-white">
-                        <div className="flex items-center gap-3 mb-4 text-slate-300">
-                            <Mail size={20} />
-                            <span className="font-bold">Communication</span>
-                        </div>
-                        <p className="text-sm text-slate-400 mb-4">Send invoice reminder to parent/guardian email.</p>
-                        <Button className="w-full bg-indigo-500 hover:bg-indigo-600 text-white border-0">
-                            Send Reminder
-                        </Button>
                     </Card>
                 </div>
             </div>

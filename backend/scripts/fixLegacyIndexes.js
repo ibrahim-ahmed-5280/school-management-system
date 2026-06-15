@@ -42,7 +42,8 @@ const fixLegacyIndexes = async () => {
             { coll: 'attendancerecords', name: 'schoolId_1_branchId_1_timetableSlotId_1_date_1' },
             { coll: 'payments', name: 'tenantId_1_branchId_1_receiptNumber_1' },
             { coll: 'subjects', name: 'schoolId_1_code_1' },
-            { coll: 'academicyears', name: 'schoolId_1_name_1' }
+            { coll: 'academicyears', name: 'schoolId_1_name_1' },
+            { coll: 'invoices', name: 'tenantId_1_branchId_1_studentId_1_academicYearId_1' }
         ];
 
         for (const spec of specificDrops) {
@@ -69,6 +70,13 @@ const fixLegacyIndexes = async () => {
         const Payment = require('../models/Payment');
         const Subject = require('../models/Subject');
         const AcademicYear = require('../models/AcademicYear');
+        const Invoice = require('../models/Invoice');
+        const Term = require('../models/Term');
+
+        await db.collection('invoices').updateMany(
+            { billingPeriodKey: { $exists: false } },
+            { $set: { billingPeriodKey: 'YEARLY', billingPeriodLabel: 'Annual' } }
+        );
 
         await Student.syncIndexes();
         console.log("Indexes synchronized for model 'Student'.");
@@ -90,6 +98,12 @@ const fixLegacyIndexes = async () => {
 
         await AcademicYear.syncIndexes();
         console.log("Indexes synchronized for model 'AcademicYear'.");
+
+        await Invoice.syncIndexes();
+        console.log("Indexes synchronized for model 'Invoice'.");
+
+        await Term.syncIndexes();
+        console.log("Indexes synchronized for model 'Term'.");
 
         console.log('Migration completed successfully.');
         process.exit(0);

@@ -4,6 +4,7 @@ const Class = require('../models/Class');
 const AcademicYear = require('../models/AcademicYear');
 const Branch = require('../models/Branch');
 const User = require('../models/User');
+const GradingPolicy = require('../models/GradingPolicy');
 
 // @desc    Promote students to next class
 // @route   POST /api/academic/promote
@@ -32,6 +33,7 @@ const promoteStudents = async (req, res) => {
         }
 
         // 3. Verify all studentIds exist and belong to the same tenant (and branch if branch-scoped)
+        const verifiedStudents = [];
         for (const studentId of studentIds) {
             const studentQuery = { _id: studentId, tenantId: req.tenantId };
             if (req.branchId) {
@@ -40,6 +42,28 @@ const promoteStudents = async (req, res) => {
             const student = await Student.findOne(studentQuery);
             if (!student) {
                 return res.status(403).json({ message: 'Access denied for this academic resource.' });
+            }
+            verifiedStudents.push(student);
+        }
+
+        const academicPolicy = await GradingPolicy.findOne({ tenantId: req.tenantId }).lean();
+        const finalGradeLevel = String(academicPolicy?.finalGradeLevel || '12').trim().toLowerCase();
+
+        for (const student of verifiedStudents) {
+            const enrollmentQuery = {
+                studentId: student._id,
+                tenantId: req.tenantId,
+                status: { $in: ['Current', 'Active', 'active'] }
+            };
+            if (req.branchId) enrollmentQuery.branchId = req.branchId;
+            const activeEnrollment = await Enrollment.findOne(enrollmentQuery).populate('classId', 'name gradeLevel');
+            if (
+                activeEnrollment?.classId
+                && String(activeEnrollment.classId.gradeLevel || '').trim().toLowerCase() === finalGradeLevel
+            ) {
+                return res.status(400).json({
+                    message: `${activeEnrollment.classId.name || 'Final grade'} students must use the school graduation operation.`
+                });
             }
         }
 

@@ -16,7 +16,8 @@ const RegisterTenant = () => {
         adminName: '',
         email: '',
         password: '',
-        plan: ''
+        plan: '',
+        billingCycle: 'monthly'
     });
     const [showPassword, setShowPassword] = useState(false);
     const [loading, setLoading] = useState(false);
@@ -220,6 +221,15 @@ const RegisterTenant = () => {
                         </select>
                     </label>
                 )}
+
+                <label className="block">
+                    <span className="mb-1.5 block text-[13px] font-semibold text-slate-700">Billing Cycle</span>
+                    <select name="billingCycle" value={formData.billingCycle} onChange={handleChange} required
+                        className="h-11 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 text-slate-800 text-sm outline-none transition-all focus:border-[#4477f5] focus:bg-white focus:ring-4 focus:ring-[#4477f5]/10">
+                        <option value="monthly">Monthly billing</option>
+                        <option value="yearly">Yearly billing</option>
+                    </select>
+                </label>
 
                 <label className="block">
                     <span className="mb-1.5 block text-[13px] font-semibold text-slate-700">Password</span>

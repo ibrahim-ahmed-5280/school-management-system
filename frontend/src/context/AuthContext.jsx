@@ -9,7 +9,7 @@ import {
 } from '../services/api/auth.api';
 import { branchLogin as apiBranchLogin } from '../services/api/branchAuth.api';
 import { apiStudentLogin } from '../services/api/student.api';
-import { clearStoredUser, getStoredUser, setStoredUser } from '../utils/storage';
+import { clearStoredUser, getStoredTeacherBranchId, getStoredUser, setStoredTeacherBranchId, setStoredUser } from '../utils/storage';
 
 const AuthContext = createContext();
 
@@ -18,6 +18,13 @@ export const AuthProvider = ({ children }) => {
     const [loading, setLoading] = useState(() => Boolean(getStoredUser()?.token));
 
     const storeSession = useCallback((data) => {
+        if (data?.role === 'teacher') {
+            const authorizedBranchIds = [data.branchId, ...(data.authorizedBranchIds || [])].filter(Boolean).map(String);
+            const selectedBranchId = getStoredTeacherBranchId();
+            if (!selectedBranchId || !authorizedBranchIds.includes(String(selectedBranchId))) {
+                setStoredTeacherBranchId(data.branchId);
+            }
+        }
         setUser(data);
         setStoredUser(data);
         return data;

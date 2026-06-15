@@ -38,7 +38,7 @@ const protect = async (req, res, next) => {
             }
 
             if (req.tenantId) {
-                const tenant = await Tenant.findById(req.tenantId).select('status isActive isApproved');
+                const tenant = await Tenant.findById(req.tenantId).select('status isActive isApproved subscription');
                 if (!tenant || resolveTenantStatus(tenant) !== 'active') {
                     return res.status(403).json({
                         message: `Institution is ${tenant ? resolveTenantStatus(tenant) : 'unavailable'}`
@@ -49,6 +49,16 @@ const protect = async (req, res, next) => {
             if (req.scope === 'branch') {
                 if (!req.branchId) {
                     return res.status(403).json({ message: 'Branch account has no branch context' });
+                }
+                if (req.role === 'teacher') {
+                    const requestedBranchId = req.headers?.['x-branch-id'];
+                    const authorizedBranchIds = [req.user.branchId, ...(req.user.authorizedBranchIds || [])]
+                        .filter(Boolean)
+                        .map((branchId) => String(branchId));
+                    if (requestedBranchId && !authorizedBranchIds.includes(String(requestedBranchId))) {
+                        return res.status(403).json({ message: 'Teacher is not authorized for the requested branch' });
+                    }
+                    req.branchId = requestedBranchId || req.user.branchId;
                 }
                 const branch = await Branch.findOne({
                     _id: req.branchId,

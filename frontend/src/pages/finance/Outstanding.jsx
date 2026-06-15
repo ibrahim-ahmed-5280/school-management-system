@@ -86,7 +86,7 @@ const Outstanding = () => {
                     <div className="p-2">
                         <h3 className="font-bold text-slate-700 text-lg mb-2">Billing Operations</h3>
                         <p className="text-sm text-slate-600">
-                            Automatic email alerts and due date reminders are enabled for all invoices.
+                            Use due dates and the debtor list to coordinate invoice follow-up.
                         </p>
                         <p className="text-sm font-medium text-slate-700 mt-4">
                             Active outstanding invoice count: <strong>{data.count || 0}</strong>

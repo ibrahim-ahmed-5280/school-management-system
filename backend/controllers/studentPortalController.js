@@ -6,6 +6,7 @@ const Exam = require('../models/Exam');
 const ClassSubject = require('../models/ClassSubject');
 const AttendanceRecord = require('../models/AttendanceRecord');
 const AttendanceSession = require('../models/AttendanceSession');
+const { resolvePassMarkPercent } = require('../utils/grading');
 
 const sendResponse = (res, success, data = null, message = '') => {
     return res.json({ success, message, data });
@@ -162,7 +163,7 @@ exports.getResults = async (req, res) => {
         const subjectMeta = curriculum.map(c => ({
             subjectId: (c.subjectId?._id || c.subjectId).toString(),
             name: c.subjectId?.name,
-            passMarkPercent: c.passMarkPercent || 40
+            passMarkPercent: resolvePassMarkPercent(c)
         }));
 
         const uniqueSubjects = new Map();
@@ -306,7 +307,7 @@ exports.getSubjects = async (req, res) => {
                     subjectId,
                     subjectName: c.subjectId?.name,
                     maxScore: 100,
-                    passMarkPercent: c.passMarkPercent || 40
+                    passMarkPercent: resolvePassMarkPercent(c)
                 });
             }
         });
@@ -351,7 +352,7 @@ exports.getRank = async (req, res) => {
             if (!subjectMetaMap.has(subjectId)) {
                 subjectMetaMap.set(subjectId, {
                     subjectId,
-                    passMarkPercent: c.passMarkPercent || 40
+                    passMarkPercent: resolvePassMarkPercent(c)
                 });
             }
         });

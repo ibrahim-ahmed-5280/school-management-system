@@ -22,6 +22,12 @@ const platformService = {
   createPlan: (data) => api.post('/platform/plans', data),
   updatePlan: (id, data) => api.put(`/platform/plans/${id}`, data),
   deletePlan: (id) => api.delete(`/platform/plans/${id}`),
+  getBillingSummary: (params = {}) => api.get('/platform/billing/summary', { params }),
+  getSubscriptionInvoices: (params = {}) => api.get('/platform/billing/invoices', { params }),
+  createSubscriptionInvoice: (data) => api.post('/platform/billing/invoices', data),
+  reconcileSubscriptionBilling: () => api.post('/platform/billing/reconcile'),
+  recordSubscriptionPayment: (invoiceId, data) => api.post(`/platform/billing/invoices/${invoiceId}/payments`, data),
+  reverseSubscriptionPayment: (paymentId, reason) => api.post(`/platform/billing/payments/${paymentId}/reverse`, { reason }),
   
   getAuditLogs: (params = {}) => api.get('/platform/audit-logs', { params }),
   

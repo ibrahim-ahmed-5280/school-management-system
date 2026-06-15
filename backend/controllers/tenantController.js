@@ -17,6 +17,7 @@ const AttendanceSession = require('../models/AttendanceSession');
 const FeeStructure = require('../models/FeeStructure');
 const TeacherAssignment = require('../models/TeacherAssignment');
 const TimetableSlot = require('../models/TimetableSlot');
+const GradingPolicy = require('../models/GradingPolicy');
 const { logActivity } = require('../utils/logger');
 const { login } = require('./authController');
 const { TENANT_ADMIN_CREATABLE_ROLES, assertValidRoleScope } = require('../utils/rolePolicy');
@@ -36,6 +37,22 @@ const serializeUser = (user) => {
     const raw = typeof user.toObject === 'function' ? user.toObject() : user;
     delete raw.passwordHash;
     return raw;
+};
+
+const validateAuthorizedTeacherBranches = async ({ tenantId, role, branchId, authorizedBranchIds = [] }) => {
+    if (role !== 'teacher') return [];
+    const uniqueBranchIds = [...new Set([branchId, ...(authorizedBranchIds || [])].filter(Boolean).map(String))];
+    const validCount = await Branch.countDocuments({
+        _id: { $in: uniqueBranchIds },
+        tenantId,
+        isActive: { $ne: false }
+    });
+    if (validCount !== uniqueBranchIds.length) {
+        const error = new Error('One or more authorized teacher branches are invalid or inactive');
+        error.statusCode = 400;
+        throw error;
+    }
+    return uniqueBranchIds;
 };
 
 const ensureTenantUser = async (req, userId) => {
@@ -313,7 +330,7 @@ const assignBranchAdmin = asyncHandler(async (req, res) => {
  * @route   POST /api/tenant/users
  */
 const createUser = asyncHandler(async (req, res) => {
-    const { name, email, password, role, scope, branchId, students = [] } = req.body;
+    const { name, email, password, role, scope, branchId, students = [], authorizedBranchIds = [] } = req.body;
     const normalized = assertValidRoleScope(role, scope);
 
     if (!TENANT_ADMIN_CREATABLE_ROLES.has(normalized.role)) {
@@ -360,6 +377,12 @@ const createUser = asyncHandler(async (req, res) => {
             throw new Error('One or more selected students do not belong to this institution');
         }
     }
+    const teacherBranchIds = await validateAuthorizedTeacherBranches({
+        tenantId: req.tenantId,
+        role: normalized.role,
+        branchId,
+        authorizedBranchIds
+    });
 
     const user = await User.create({
         tenantId: req.tenantId,
@@ -369,6 +392,7 @@ const createUser = asyncHandler(async (req, res) => {
         passwordHash: password, // Pre-save hook will hash
         role: normalized.role,
         scope: normalized.scope,
+        authorizedBranchIds: teacherBranchIds,
         students: normalized.role === 'parent' ? students : [],
         isActive: true
     });
@@ -378,7 +402,7 @@ const createUser = asyncHandler(async (req, res) => {
         action: 'USER_CREATED',
         entityType: 'User',
         entityId: user._id.toString(),
-        after: { name, email: normalizedEmail, role: normalized.role, scope: normalized.scope, branchId }
+        after: { name, email: normalizedEmail, role: normalized.role, scope: normalized.scope, branchId, authorizedBranchIds: teacherBranchIds }
     });
 
     res.status(201).json({
@@ -387,7 +411,8 @@ const createUser = asyncHandler(async (req, res) => {
         email: user.email,
         role: user.role,
         scope: user.scope,
-        branchId: user.branchId
+        branchId: user.branchId,
+        authorizedBranchIds: user.authorizedBranchIds
     });
 });
 
@@ -399,7 +424,9 @@ const getUsers = asyncHandler(async (req, res) => {
     const { branchId, role } = req.query;
     const query = { tenantId: req.tenantId, role: { $ne: 'super_admin' } }; // Filter out super admins if preferred
 
-    if (branchId) query.branchId = branchId;
+    if (branchId) {
+        query.$or = [{ branchId }, { role: 'teacher', authorizedBranchIds: branchId }];
+    }
     if (role) query.role = role;
 
     const users = await User.find(query).select('-passwordHash');
@@ -459,6 +486,15 @@ const updateUser = asyncHandler(async (req, res) => {
             targetUser.branchId = null;
         }
     }
+
+    targetUser.authorizedBranchIds = await validateAuthorizedTeacherBranches({
+        tenantId: req.tenantId,
+        role: normalized.role,
+        branchId: targetUser.branchId,
+        authorizedBranchIds: Object.prototype.hasOwnProperty.call(req.body, 'authorizedBranchIds')
+            ? req.body.authorizedBranchIds
+            : targetUser.authorizedBranchIds
+    });
 
     await targetUser.save();
 
@@ -909,29 +945,33 @@ const getOverviewReport = asyncHandler(async (req, res) => {
 const promoteStudents = asyncHandler(async (req, res) => {
     const { fromAcademicYearId, toAcademicYearId, rules = {} } = req.body;
     const classMap = Array.isArray(rules.classMap)
-        ? rules.classMap.filter((mapping) => mapping?.fromClassId && mapping?.toClassId)
+        ? rules.classMap.filter((mapping) => mapping?.fromClassId && (mapping?.toClassId || mapping?.graduate === true))
         : [];
+    const hasPromotions = classMap.some((mapping) => mapping.graduate !== true);
 
-    if (!fromAcademicYearId || !toAcademicYearId || classMap.length === 0) {
+    if (!fromAcademicYearId || (hasPromotions && !toAcademicYearId) || classMap.length === 0) {
         res.status(400);
-        throw new Error('Source year, target year, and at least one class mapping are required');
+        throw new Error('Source year and at least one valid promotion or graduation mapping are required');
     }
-    if (String(fromAcademicYearId) === String(toAcademicYearId)) {
+    if (hasPromotions && String(fromAcademicYearId) === String(toAcademicYearId)) {
         res.status(400);
         throw new Error('Target academic year must be different from source year');
     }
 
-    const [fromYear, toYear] = await Promise.all([
+    const [fromYear, toYear, academicPolicy] = await Promise.all([
         AcademicYear.findOne({ _id: fromAcademicYearId, tenantId: req.tenantId }),
-        AcademicYear.findOne({ _id: toAcademicYearId, tenantId: req.tenantId })
+        hasPromotions ? AcademicYear.findOne({ _id: toAcademicYearId, tenantId: req.tenantId }) : Promise.resolve(null),
+        GradingPolicy.findOne({ tenantId: req.tenantId }).lean()
     ]);
-    if (!fromYear || !toYear) {
+    if (!fromYear || (hasPromotions && !toYear)) {
         res.status(400);
         throw new Error('Source or target academic year is invalid for this institution');
     }
+    const finalGradeLevel = String(academicPolicy?.finalGradeLevel || '12').trim().toLowerCase();
 
     const results = {
         promoted: 0,
+        graduated: 0,
         failed: 0,
         skippedExisting: 0,
         totalConsidered: 0,
@@ -940,15 +980,25 @@ const promoteStudents = asyncHandler(async (req, res) => {
 
     for (const mapping of classMap) {
         const { fromClassId, toClassId } = mapping;
+        const graduate = mapping.graduate === true;
         const [fromClass, toClass] = await Promise.all([
             Class.findOne({ _id: fromClassId, tenantId: req.tenantId }),
-            Class.findOne({ _id: toClassId, tenantId: req.tenantId })
+            graduate ? Promise.resolve(null) : Class.findOne({ _id: toClassId, tenantId: req.tenantId })
         ]);
-        if (!fromClass || !toClass) {
-            results.errors.push(`Invalid class mapping ${fromClassId} -> ${toClassId}`);
+        if (!fromClass || (!graduate && !toClass)) {
+            results.errors.push(`Invalid class mapping ${fromClassId} -> ${toClassId || 'Graduated'}`);
             continue;
         }
-        if (String(fromClass.branchId) !== String(toClass.branchId)) {
+        const isFinalGrade = String(fromClass.gradeLevel || '').trim().toLowerCase() === finalGradeLevel;
+        if (graduate && !isFinalGrade) {
+            results.errors.push(`${fromClass.name} is not the configured final grade`);
+            continue;
+        }
+        if (!graduate && isFinalGrade) {
+            results.errors.push(`${fromClass.name} is the final grade and must use graduation`);
+            continue;
+        }
+        if (!graduate && String(fromClass.branchId) !== String(toClass.branchId)) {
             results.errors.push(`Class mapping ${fromClass.name} -> ${toClass.name} crosses branches`);
             continue;
         }
@@ -961,8 +1011,74 @@ const promoteStudents = asyncHandler(async (req, res) => {
             status: { $in: ACTIVE_ENROLLMENT_STATUSES }
         });
 
+        let graduationPerformance = null;
+        if (graduate && academicPolicy?.graduationRequiresPass !== false) {
+            graduationPerformance = new Map();
+            const exams = await Exam.find({
+                tenantId: req.tenantId,
+                branchId: fromClass.branchId,
+                academicYearId: fromAcademicYearId,
+                classId: fromClassId
+            }).select('_id');
+            const examIds = exams.map((exam) => exam._id);
+            if (examIds.length) {
+                const studentResults = await Result.find({
+                    tenantId: req.tenantId,
+                    branchId: fromClass.branchId,
+                    examId: { $in: examIds },
+                    studentId: { $in: enrollments.map((enrollment) => enrollment.studentId) }
+                }).select('studentId status');
+                for (const result of studentResults) {
+                    const key = String(result.studentId);
+                    const current = graduationPerformance.get(key) || { hasAny: false, hasFail: false };
+                    current.hasAny = true;
+                    if (String(result.status).toUpperCase() === 'FAIL') current.hasFail = true;
+                    graduationPerformance.set(key, current);
+                }
+            }
+        }
+
         for (const enroll of enrollments) {
             results.totalConsidered++;
+
+            if (graduate) {
+                const performance = graduationPerformance?.get(String(enroll.studentId));
+                if (graduationPerformance && (!performance?.hasAny || performance.hasFail)) {
+                    results.failed++;
+                    continue;
+                }
+
+                const student = await Student.findOne({
+                    _id: enroll.studentId,
+                    tenantId: req.tenantId,
+                    branchId: enroll.branchId
+                });
+                if (!student) {
+                    results.failed++;
+                    results.errors.push(`Student ${enroll.studentId} was not found for graduation`);
+                    continue;
+                }
+                const originalStudentStatus = student.status;
+                const enrollmentUpdate = await Enrollment.updateOne(
+                    { _id: enroll._id, tenantId: req.tenantId, status: { $in: ACTIVE_ENROLLMENT_STATUSES } },
+                    { $set: { status: 'Graduated' } }
+                );
+                if (enrollmentUpdate.matchedCount === 0) {
+                    results.failed++;
+                    continue;
+                }
+                try {
+                    student.status = 'Graduated';
+                    await student.save();
+                    results.graduated++;
+                } catch (error) {
+                    await Enrollment.updateOne({ _id: enroll._id, tenantId: req.tenantId }, { $set: { status: enroll.status } }).catch(() => {});
+                    student.status = originalStudentStatus;
+                    results.failed++;
+                    results.errors.push(`Student ${enroll.studentId}: ${error.message}`);
+                }
+                continue;
+            }
 
             const existingNext = await Enrollment.findOne({
                 tenantId: req.tenantId,

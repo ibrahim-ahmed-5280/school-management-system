@@ -232,7 +232,12 @@ const verifyOwnership = async (req, res, { classId, sectionId, subjectId, teache
         }
     }
     if (teacherUserId) {
-        const teachExists = await User.findOne({ _id: teacherUserId, tenantId: req.tenantId, branchId: req.branchId, role: 'teacher' });
+        const teachExists = await User.findOne({
+            _id: teacherUserId,
+            tenantId: req.tenantId,
+            role: 'teacher',
+            $or: [{ branchId: req.branchId }, { authorizedBranchIds: req.branchId }]
+        });
         if (!teachExists) {
             return sendError(res, 403, 'Access denied for this branch resource.');
         }

@@ -15,6 +15,8 @@ const {
 const { protect, authorize, requireScope, tenantGuard } = require('../middleware/auth');
 const { requirePermission } = require('../middleware/permissions');
 const { authRateLimiter } = require('../middleware/rateLimiter');
+const { enforcePlanLimit } = require('../services/planLimitService');
+const academicPolicyController = require('../controllers/academicPolicyController');
 
 // Public tenant auth
 router.post('/auth/login', authRateLimiter, login);
@@ -49,7 +51,7 @@ const upload = require('../middleware/uploadMiddleware');
 router.put('/settings/branding', upload.single('logo'), updateBranding);
 
 // B) Branch Management
-router.post('/branches', createBranch);
+router.post('/branches', enforcePlanLimit('branches'), createBranch);
 router.put('/branches/:branchId', updateBranch);
 router.patch('/branches/:branchId/status', toggleBranchStatus);
 router.post('/branches/:branchId/assign-branch-admin', assignBranchAdmin);
@@ -65,6 +67,13 @@ router.put('/users/:userId/permissions', requirePermission('tenant.users.permiss
 // D) Academic Year
 router.post('/academic-years', createAcademicYear);
 router.patch('/academic-years/:yearId/set-current', setCurrentYear);
+router.get('/academic-policy', requirePermission('tenant.academicPolicy.view'), academicPolicyController.getAcademicPolicy);
+router.put('/academic-policy', requirePermission('tenant.academicPolicy.update'), academicPolicyController.updateAcademicPolicy);
+router.get('/terms', requirePermission('tenant.academicPolicy.view'), academicPolicyController.getTerms);
+router.get('/academic-years/:yearId/terms', requirePermission('tenant.academicPolicy.view'), academicPolicyController.getTerms);
+router.post('/academic-years/:yearId/terms', requirePermission('tenant.academicPolicy.update'), academicPolicyController.createTerm);
+router.put('/terms/:termId', requirePermission('tenant.academicPolicy.update'), academicPolicyController.updateTerm);
+router.delete('/terms/:termId', requirePermission('tenant.academicPolicy.update'), academicPolicyController.deleteTerm);
 
 // E) Reporting
 router.get('/reports/overview', getOverviewReport);

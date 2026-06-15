@@ -1,13 +1,30 @@
 import React, { useState, useEffect } from 'react';
 import { fetchFeeStructures, createFeeStructure, deleteFeeStructure } from '../../services/api/finance.api';
-import { getBranches, getAcademicYears } from '../../services/api/tenant.api';
+import { getBranches, getAcademicYears, getClasses } from '../../services/api/tenant.api';
 import { Card, Button, Input, Select, Badge } from '../../components/ui';
 import { Trash2, Plus, CreditCard, X } from 'lucide-react';
+
+const unwrapList = (response) => {
+    const payload = response?.data?.data ?? response?.data ?? response;
+    return Array.isArray(payload) ? payload : [];
+};
+
+const billingFrequencyOptions = [
+    { label: 'Annual payment', value: 'YEARLY' },
+    { label: 'Monthly payments', value: 'MONTHLY' },
+    { label: 'Every two months', value: 'EVERY_TWO_MONTHS' },
+    { label: 'Quarterly payments', value: 'QUARTERLY' },
+    { label: 'Term payments', value: 'TERM' },
+    { label: 'Custom schedule', value: 'CUSTOM' }
+];
+
+const frequencyLabel = (value) => billingFrequencyOptions.find(option => option.value === value)?.label || 'Annual payment';
 
 const FeeStructures = () => {
     const [structures, setStructures] = useState([]);
     const [branches, setBranches] = useState([]);
     const [years, setYears] = useState([]);
+    const [classes, setClasses] = useState([]);
     const [loading, setLoading] = useState(true);
     
     // Form State
@@ -15,10 +32,14 @@ const FeeStructures = () => {
     const [formData, setFormData] = useState({
         name: '',
         branchId: '',
+        classId: '',
         academicYearId: '',
+        billingFrequency: 'YEARLY',
+        billingPeriods: [],
         feeItems: []
     });
     const [newItem, setNewItem] = useState({ name: '', amount: '' });
+    const [newPeriod, setNewPeriod] = useState({ label: '', amount: '' });
 
     useEffect(() => {
         loadInitialData();
@@ -31,15 +52,34 @@ const FeeStructures = () => {
                 getBranches(),
                 getAcademicYears()
             ]);
-            setStructures(Array.isArray(fs) ? fs : (fs.data || []));
-            setBranches(b.map(i => ({ label: i.name, value: i._id })));
-            setYears(y.map(i => ({ label: i.name, value: i._id })));
+            setStructures(unwrapList(fs));
+            setBranches(unwrapList(b).map(i => ({ label: i.name, value: i._id })));
+            setYears(unwrapList(y).map(i => ({ label: i.name, value: i._id })));
         } catch (e) {
             console.error(e);
         } finally {
             setLoading(false);
         }
     };
+
+    useEffect(() => {
+        if (!formData.branchId) {
+            setClasses([]);
+            return;
+        }
+
+        const loadClasses = async () => {
+            try {
+                const response = await getClasses({ branchId: formData.branchId });
+                setClasses(unwrapList(response).map(item => ({ label: item.name, value: item._id })));
+            } catch (error) {
+                console.error(error);
+                setClasses([]);
+            }
+        };
+
+        loadClasses();
+    }, [formData.branchId]);
 
     const handleAddItem = () => {
         if (!newItem.name || !newItem.amount) return;
@@ -57,16 +97,26 @@ const FeeStructures = () => {
         }));
     };
 
+    const handleAddPeriod = () => {
+        if (!newPeriod.label || newPeriod.amount === '' || Number(newPeriod.amount) < 0) return;
+        setFormData(prev => ({
+            ...prev,
+            billingPeriods: [...prev.billingPeriods, { label: newPeriod.label, amount: Number(newPeriod.amount) }]
+        }));
+        setNewPeriod({ label: '', amount: '' });
+    };
+
     const handleSubmit = async (e) => {
         e.preventDefault();
-        if (!formData.branchId || !formData.name || formData.feeItems.length === 0) return;
+        if (!formData.branchId || !formData.classId || !formData.academicYearId || !formData.name || formData.feeItems.length === 0) return;
+        if (formData.billingFrequency === 'CUSTOM' && formData.billingPeriods.length === 0) return;
         
         try {
             await createFeeStructure(formData);
             const updated = await fetchFeeStructures();
-            setStructures(updated || []);
+            setStructures(unwrapList(updated));
             setIsCreating(false);
-            setFormData({ name: '', branchId: '', academicYearId: '', feeItems: [] });
+            setFormData({ name: '', branchId: '', classId: '', academicYearId: '', billingFrequency: 'YEARLY', billingPeriods: [], feeItems: [] });
         } catch (e) {
             console.error(e);
             alert('Failed to create fee structure');
@@ -92,12 +142,20 @@ const FeeStructures = () => {
                 </div>
                 <Card>
                     <div className="space-y-6">
-                         <div className="grid grid-cols-2 gap-4">
+                         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                             <Select 
                                 label="Branch" 
                                 options={branches} 
                                 value={formData.branchId}
-                                onChange={e => setFormData({...formData, branchId: e.target.value})}
+                                onChange={e => setFormData({...formData, branchId: e.target.value, classId: ''})}
+                                required
+                            />
+                            <Select
+                                label="Class"
+                                options={classes}
+                                value={formData.classId}
+                                onChange={e => setFormData({...formData, classId: e.target.value})}
+                                disabled={!formData.branchId || classes.length === 0}
                                 required
                             />
                             <Select 
@@ -112,6 +170,17 @@ const FeeStructures = () => {
                             label="Structure Name (e.g., Grade 10 Standard)" 
                             value={formData.name}
                             onChange={e => setFormData({...formData, name: e.target.value})}
+                         />
+
+                         <Select
+                            label="Student Payment Schedule"
+                            options={billingFrequencyOptions}
+                            value={formData.billingFrequency}
+                            onChange={e => setFormData({
+                                ...formData,
+                                billingFrequency: e.target.value,
+                                billingPeriods: e.target.value === 'CUSTOM' ? formData.billingPeriods : []
+                            })}
                          />
                          
                          <div className="border-t pt-4">
@@ -155,8 +224,51 @@ const FeeStructures = () => {
                             </div>
                          </div>
 
+                         {formData.billingFrequency === 'CUSTOM' && (
+                            <div className="border-t pt-4">
+                                <label className="text-sm font-medium text-slate-700 mb-2 block">Custom Billing Periods</label>
+                                <div className="flex gap-2 mb-4">
+                                    <Input
+                                        placeholder="Period label"
+                                        value={newPeriod.label}
+                                        onChange={e => setNewPeriod({ ...newPeriod, label: e.target.value })}
+                                        className="flex-1"
+                                    />
+                                    <Input
+                                        type="number"
+                                        min="0"
+                                        placeholder="Amount"
+                                        value={newPeriod.amount}
+                                        onChange={e => setNewPeriod({ ...newPeriod, amount: e.target.value })}
+                                        className="w-32"
+                                    />
+                                    <Button type="button" onClick={handleAddPeriod} className="px-4"><Plus size={20} /></Button>
+                                </div>
+                                <div className="space-y-2 bg-slate-50 p-4 rounded-lg">
+                                    {formData.billingPeriods.length === 0 && <p className="text-slate-400 text-sm italic">Add the periods students will be billed for.</p>}
+                                    {formData.billingPeriods.map((period, idx) => (
+                                        <div key={`${period.label}-${idx}`} className="flex justify-between items-center bg-white p-2 rounded border border-slate-100">
+                                            <span className="font-medium text-slate-700">{period.label}</span>
+                                            <div className="flex items-center gap-4">
+                                                <span className="font-bold text-slate-900">${period.amount}</span>
+                                                <button type="button" onClick={() => setFormData(prev => ({ ...prev, billingPeriods: prev.billingPeriods.filter((_, index) => index !== idx) }))} className="text-red-400 hover:text-red-600" aria-label={`Remove ${period.label}`}>
+                                                    <X size={16} />
+                                                </button>
+                                            </div>
+                                        </div>
+                                    ))}
+                                    {formData.billingPeriods.length > 0 && (
+                                        <div className="flex justify-between items-center pt-2 border-t">
+                                            <span className="font-bold text-slate-500">Scheduled Total</span>
+                                            <span className="font-black text-slate-900">${formData.billingPeriods.reduce((sum, period) => sum + Number(period.amount || 0), 0)}</span>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                         )}
+
                          <div className="flex justify-end pt-4">
-                             <Button onClick={handleSubmit} disabled={!formData.name || formData.feeItems.length === 0}>
+                             <Button onClick={handleSubmit} disabled={!formData.name || !formData.branchId || !formData.classId || !formData.academicYearId || formData.feeItems.length === 0 || (formData.billingFrequency === 'CUSTOM' && formData.billingPeriods.length === 0)}>
                                  Create Structure
                              </Button>
                          </div>
@@ -191,10 +303,12 @@ const FeeStructures = () => {
                                 <CreditCard size={24} />
                             </div>
                             <div>
-                                <h3 className="font-bold text-slate-800 text-lg">{structure.name}</h3>
+                                <h3 className="font-bold text-slate-800 text-lg">{structure.name || 'Standard Fee Structure'}</h3>
                                 <div className="flex gap-2 text-xs mt-1">
-                                    <Badge variant="default">{branches.find(b => b.value === structure.branchId)?.label || 'Unknown Branch'}</Badge>
-                                    <Badge variant="secondary">{years.find(y => y.value === structure.academicYearId)?.label || 'Year'}</Badge>
+                                    <Badge variant="default">{structure.branchId?.name || branches.find(b => b.value === structure.branchId)?.label || 'Unknown Branch'}</Badge>
+                                    <Badge variant="secondary">{structure.classId?.name || 'Unknown Class'}</Badge>
+                                    <Badge variant="secondary">{structure.academicYearId?.name || years.find(y => y.value === structure.academicYearId)?.label || 'Year'}</Badge>
+                                    <Badge variant="secondary">{frequencyLabel(structure.billingFrequency)}</Badge>
                                 </div>
                             </div>
                         </div>

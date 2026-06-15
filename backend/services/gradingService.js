@@ -29,16 +29,7 @@ exports.calculateResult = async (tenantId, subjects) => {
     const rules = policy ? policy.rules : DEFAULT_RULES;
 
     // 4. Find Grade
-    let grade = 'N/A';
-    // Sort rules by min descending to find the highest match
-    const sortedRules = [...rules].sort((a,b) => b.min - a.min);
-    
-    for (const rule of sortedRules) {
-        if (percentage >= rule.min && percentage <= rule.max) {
-            grade = rule.grade;
-            break;
-        }
-    }
+    const grade = exports.gradeForPercentage(percentage, rules);
 
     return { total, grade };
 };
@@ -47,3 +38,12 @@ exports.getGradingRules = async (tenantId) => {
     const policy = await GradingPolicy.findOne({ tenantId });
     return policy ? policy.rules : DEFAULT_RULES;
 };
+
+exports.gradeForPercentage = (percentage, rules = DEFAULT_RULES) => {
+    const match = [...rules]
+        .sort((a, b) => Number(b.min) - Number(a.min))
+        .find((rule) => Number(percentage) >= Number(rule.min) && Number(percentage) <= Number(rule.max));
+    return match?.grade || 'N/A';
+};
+
+exports.DEFAULT_RULES = DEFAULT_RULES;

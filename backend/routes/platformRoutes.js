@@ -26,6 +26,14 @@ const { protect, authorize } = require('../middleware/auth');
 const { requirePermission } = require('../middleware/permissions');
 const upload = require('../middleware/uploadMiddleware');
 const { authRateLimiter, registrationRateLimiter } = require('../middleware/rateLimiter');
+const {
+    createInvoice,
+    getBillingSummary,
+    getSubscriptionInvoices,
+    reconcileBilling,
+    recordPayment,
+    reversePayment
+} = require('../controllers/platformBillingController');
 
 const requireTenantStatusPermission = (req, res, next) => {
     const requestedStatus = String(req.body.status || '').toLowerCase();
@@ -62,6 +70,12 @@ router.get('/plans', requirePermission('platform.plans.view'), getPlatformPlans)
 router.post('/plans', requirePermission('platform.plans.create'), createPlatformPlan);
 router.put('/plans/:id', requirePermission('platform.plans.update'), updatePlatformPlan);
 router.delete('/plans/:id', requirePermission('platform.plans.delete'), deletePlatformPlan);
+router.get('/billing/summary', requirePermission('platform.billing.view'), getBillingSummary);
+router.get('/billing/invoices', requirePermission('platform.billing.view'), getSubscriptionInvoices);
+router.post('/billing/invoices', requirePermission('platform.billing.manage'), createInvoice);
+router.post('/billing/reconcile', requirePermission('platform.billing.manage'), reconcileBilling);
+router.post('/billing/invoices/:invoiceId/payments', requirePermission('platform.billing.payments.record'), recordPayment);
+router.post('/billing/payments/:paymentId/reverse', requirePermission('platform.billing.payments.reverse'), reversePayment);
 router.get('/health', requirePermission('platform.monitoring.view'), getPlatformHealth);
 router.get('/audit-logs', requirePermission('platform.audit.view'), getPlatformAuditLogs);
 router.get('/settings', requirePermission('platform.settings.view'), getPlatformSettings);

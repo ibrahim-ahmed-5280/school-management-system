@@ -13,6 +13,7 @@ import {
     X,
     User as UserIcon,
     ClipboardList
+    ,GraduationCap
 } from 'lucide-react';
 import { useNavigate, useLocation, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
@@ -31,6 +32,7 @@ const TenantLayout = ({ children }) => {
         { icon: MapPin, label: 'Branches', path: '/tenant/branches', permission: 'tenant.branches.view' },
         { icon: Users, label: 'Users', path: '/tenant/users', permission: 'tenant.users.view' },
         { icon: Calendar, label: 'Academic Years', path: '/tenant/academic-years', permission: 'tenant.academicYears.view' },
+        { icon: GraduationCap, label: 'Academic Policy', path: '/tenant/academic-policy', permission: 'tenant.academicPolicy.view' },
         { icon: BarChart3, label: 'Reports', path: '/tenant/reports', permission: 'tenant.reports.view' },
         { icon: ArrowUpCircle, label: 'Promotion', path: '/tenant/enrollments/promote', permission: 'tenant.promotions.run' },
         { icon: ArrowRightLeft, label: 'Transfer', path: '/tenant/enrollments/transfer', permission: 'tenant.transfers.run' },

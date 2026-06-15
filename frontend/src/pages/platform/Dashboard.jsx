@@ -13,16 +13,16 @@ import {
 import platformService from '../../services/platformService';
 import { 
     ResponsiveContainer, 
-    AreaChart, 
-    Area, 
+    AreaChart,
+    Area,
     PieChart, 
     Pie, 
     Cell,
-    XAxis, 
-    YAxis, 
-    CartesianGrid, 
     Tooltip, 
-    Legend 
+    Legend,
+    XAxis,
+    YAxis,
+    CartesianGrid
 } from 'recharts';
 
 const Dashboard = () => {
@@ -49,25 +49,17 @@ const Dashboard = () => {
   const totalTenants = stats?.totalTenants || 0;
   const activeTenants = stats?.activeTenants || 0;
   const inactiveTenants = Math.max(0, totalTenants - activeTenants);
-  const totalRevenue = stats?.totalRevenue || 0;
+  const subscriptionRevenueTracked = Boolean(stats?.subscriptionRevenueTracked);
+  const subscriptionRevenue = stats?.subscriptionRevenue || 0;
+  const subscriptionRevenueTrend = stats?.subscriptionRevenueTrend || [];
 
   const statCards = [
     { name: 'Total Tenants', value: totalTenants, icon: Users, color: 'text-blue-600', bg: 'bg-blue-50', hint: 'Registered schools' },
     { name: 'Active Tenants', value: activeTenants, icon: CheckCircle, color: 'text-green-600', bg: 'bg-green-50', hint: 'Currently active' },
     { name: 'Total Branches', value: stats?.totalBranches || 0, icon: School, color: 'text-indigo-600', bg: 'bg-indigo-50', hint: 'Across all networks' },
     { name: 'Total Students', value: (stats?.totalStudents || 0).toLocaleString(), icon: GraduationCap, color: 'text-purple-600', bg: 'bg-purple-50', hint: 'Registered rosters' },
-    { name: 'Total Revenue', value: `$${totalRevenue.toLocaleString()}`, icon: DollarSign, color: 'text-amber-600', bg: 'bg-amber-50', hint: 'From collections' },
+    { name: 'Subscription Revenue', value: subscriptionRevenueTracked ? `$${subscriptionRevenue.toLocaleString()}` : 'Not tracked', icon: DollarSign, color: 'text-amber-600', bg: 'bg-amber-50', hint: subscriptionRevenueTracked ? 'Platform subscriptions' : 'Billing ledger pending' },
     { name: 'System Health', value: stats?.healthStatus || 'Unknown', icon: Activity, color: 'text-rose-600', bg: 'bg-rose-50', hint: `${stats?.metrics?.avgResponseTime || 'N/A'} avg response` },
-  ];
-
-  // Derived Monthly Revenue Trend Data
-  const revenueTrendData = [
-    { month: 'Jan', Revenue: Math.round(totalRevenue * 0.12) },
-    { month: 'Feb', Revenue: Math.round(totalRevenue * 0.15) },
-    { month: 'Mar', Revenue: Math.round(totalRevenue * 0.18) },
-    { month: 'Apr', Revenue: Math.round(totalRevenue * 0.20) },
-    { month: 'May', Revenue: Math.round(totalRevenue * 0.22) },
-    { month: 'Jun', Revenue: Math.round(totalRevenue * 0.13) }
   ];
 
   // Tenant Status Distribution Data
@@ -118,32 +110,36 @@ const Dashboard = () => {
 
       {/* Analytics Graphs Section */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Left: Global Revenue Trends */}
+        {/* Left: Platform subscription revenue */}
         <div className="lg:col-span-2 bg-white rounded-xl border border-slate-200 shadow-sm p-4 flex flex-col justify-between">
             <div className="mb-4">
                 <h3 className="font-bold text-slate-800 text-sm flex items-center gap-2">
                     <BarChart2 size={16} className="text-indigo-500" />
-                    Global Revenue Projections
+                    Platform Subscription Revenue
                 </h3>
-                <p className="text-[11px] text-slate-400 font-medium">Monthly collection rates for platform memberships.</p>
+                <p className="text-[11px] text-slate-400 font-medium">Recorded tenant subscription transactions.</p>
             </div>
-            <div className="h-64">
+            {subscriptionRevenueTrend.length > 0 ? (
+              <div className="h-64">
                 <ResponsiveContainer width="100%" height="100%">
-                    <AreaChart data={revenueTrendData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
-                        <defs>
-                            <linearGradient id="colorRevenue" x1="0" y1="0" x2="0" y2="1">
-                                <stop offset="5%" stopColor="#556ee6" stopOpacity={0.2}/>
-                                <stop offset="95%" stopColor="#556ee6" stopOpacity={0}/>
-                            </linearGradient>
-                        </defs>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                        <XAxis dataKey="month" stroke="#94a3b8" fontSize={11} tickLine={false} />
-                        <YAxis stroke="#94a3b8" fontSize={11} tickLine={false} />
-                        <Tooltip contentStyle={{ borderRadius: '8px', border: '1px solid #e2e8f0' }} />
-                        <Area type="monotone" dataKey="Revenue" stroke="#556ee6" strokeWidth={2} fillOpacity={1} fill="url(#colorRevenue)" />
-                    </AreaChart>
+                  <AreaChart data={subscriptionRevenueTrend}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                    <XAxis dataKey="_id" stroke="#94a3b8" fontSize={11} tickLine={false} />
+                    <YAxis stroke="#94a3b8" fontSize={11} tickLine={false} />
+                    <Tooltip />
+                    <Area type="monotone" dataKey="total" name="Revenue" stroke="#2563eb" fill="#dbeafe" />
+                  </AreaChart>
                 </ResponsiveContainer>
-            </div>
+              </div>
+            ) : (
+              <div className="h-64 border border-dashed border-slate-200 bg-slate-50 flex items-center justify-center text-center px-6">
+                  <div>
+                      <DollarSign size={24} className="mx-auto text-slate-400 mb-3" />
+                      <p className="text-sm font-bold text-slate-600">No subscription transactions recorded yet</p>
+                      <p className="text-xs text-slate-400 mt-1">Recorded platform payments will appear here.</p>
+                  </div>
+              </div>
+            )}
         </div>
 
         {/* Right: Tenant Status Breakdown */}

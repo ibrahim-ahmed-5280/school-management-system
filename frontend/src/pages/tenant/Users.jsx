@@ -33,13 +33,14 @@ const UsersManagement = () => {
         role: '',
         scope: '',
         branchId: '',
+        authorizedBranchIds: [],
         students: []
     });
     const [studentSearch, setStudentSearch] = useState('');
     const [studentOptions, setStudentOptions] = useState([]);
     const [searchTerm, setSearchTerm] = useState('');
     const [activeDropdownUserId, setActiveDropdownUserId] = useState(null);
-    const [editModal, setEditModal] = useState({ open: false, user: null, name: '', email: '', role: '', scope: '', branchId: '' });
+    const [editModal, setEditModal] = useState({ open: false, user: null, name: '', email: '', role: '', scope: '', branchId: '', authorizedBranchIds: [] });
     const [passwordResetModal, setPasswordResetModal] = useState({ open: false, user: null, tempPassword: '' });
     const [permissionModal, setPermissionModal] = useState({
         open: false,
@@ -78,7 +79,7 @@ const UsersManagement = () => {
             await tenantService.createUser(formData);
             await fetchData();
             setIsModalOpen(false);
-            setFormData({ name: '', email: '', password: '', role: '', scope: '', branchId: '', students: [] });
+            setFormData({ name: '', email: '', password: '', role: '', scope: '', branchId: '', authorizedBranchIds: [], students: [] });
         } catch (error) {
             alert(error.response?.data?.message || 'Failed to create user');
         } finally {
@@ -104,10 +105,11 @@ const UsersManagement = () => {
                 email: editModal.email,
                 role: editModal.role,
                 scope: editModal.scope,
-                branchId: editModal.branchId
+                branchId: editModal.branchId,
+                authorizedBranchIds: editModal.role === 'teacher' ? editModal.authorizedBranchIds : []
             });
             await fetchData();
-            setEditModal({ open: false, user: null, name: '', email: '', role: '', scope: '', branchId: '' });
+            setEditModal({ open: false, user: null, name: '', email: '', role: '', scope: '', branchId: '', authorizedBranchIds: [] });
         } catch (error) {
             alert(error.response?.data?.message || 'Failed to update user');
         } finally {
@@ -379,7 +381,8 @@ const UsersManagement = () => {
                                                                         email: user.email,
                                                                         role: user.role,
                                                                         scope: user.scope,
-                                                                        branchId: user.branchId || ''
+                                                                        branchId: user.branchId || '',
+                                                                        authorizedBranchIds: user.authorizedBranchIds || (user.branchId ? [user.branchId] : [])
                                                                     });
                                                                 }}
                                                                 className="w-full px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition-colors block text-left"
@@ -483,7 +486,13 @@ const UsersManagement = () => {
                                             key={r.value}
                                             type="button"
                                             onClick={() => {
-                                                setFormData({...formData, role: r.value, scope: r.scope, branchId: r.scope === 'tenant' ? '' : formData.branchId});
+                                                setFormData({
+                                                    ...formData,
+                                                    role: r.value,
+                                                    scope: r.scope,
+                                                    branchId: r.scope === 'tenant' ? '' : formData.branchId,
+                                                    authorizedBranchIds: r.value === 'teacher' && formData.branchId ? [formData.branchId] : []
+                                                });
                                             }}
                                             className={`h-9 px-3 rounded-lg border font-bold text-[9px] tracking-tight uppercase transition-all ${formData.role === r.value ? 'bg-[var(--primary)] text-white border-[var(--primary)] shadow' : 'bg-white text-slate-600 border-slate-200 hover:border-slate-350'}`}
                                         >
@@ -501,7 +510,13 @@ const UsersManagement = () => {
                                             required
                                             className="w-full h-10 bg-slate-50 border border-slate-200 rounded-lg px-3 font-semibold text-slate-900 focus:bg-white focus:ring-2 focus:ring-[var(--primary)]/10 transition-all outline-none appearance-none text-sm"
                                             value={formData.branchId}
-                                            onChange={(e) => setFormData({...formData, branchId: e.target.value})}
+                                            onChange={(e) => setFormData({
+                                                ...formData,
+                                                branchId: e.target.value,
+                                                authorizedBranchIds: formData.role === 'teacher'
+                                                    ? [...new Set([e.target.value, ...formData.authorizedBranchIds].filter(Boolean))]
+                                                    : []
+                                            })}
                                         >
                                             <option value="">Select Target Campus</option>
                                             {branches.map(b => (
@@ -509,6 +524,30 @@ const UsersManagement = () => {
                                             ))}
                                         </select>
                                         <ChevronDown className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-350 pointer-events-none" size={14} />
+                                    </div>
+                                </div>
+                            )}
+
+                            {formData.role === 'teacher' && formData.branchId && (
+                                <div className="space-y-2">
+                                    <label className="text-[10px] font-black uppercase tracking-wider text-slate-500 ml-1">Authorized Teaching Branches</label>
+                                    <div className="max-h-32 overflow-y-auto rounded-lg border border-slate-200 bg-slate-50">
+                                        {branches.map((branch) => (
+                                            <label key={branch._id} className="flex items-center gap-2 px-3 py-2 border-b border-slate-100 text-xs font-semibold">
+                                                <input
+                                                    type="checkbox"
+                                                    checked={formData.authorizedBranchIds.includes(branch._id)}
+                                                    disabled={branch._id === formData.branchId}
+                                                    onChange={() => setFormData((current) => ({
+                                                        ...current,
+                                                        authorizedBranchIds: current.authorizedBranchIds.includes(branch._id)
+                                                            ? current.authorizedBranchIds.filter((id) => id !== branch._id)
+                                                            : [...current.authorizedBranchIds, branch._id]
+                                                    }))}
+                                                />
+                                                {branch.name}{branch._id === formData.branchId ? ' (Primary)' : ''}
+                                            </label>
+                                        ))}
                                     </div>
                                 </div>
                             )}
@@ -607,14 +646,14 @@ const UsersManagement = () => {
             {/* Edit User Modal */}
             {editModal.open && (
                 <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 animate-in fade-in duration-300">
-                    <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-md" onClick={() => setEditModal({ open: false, user: null, name: '', email: '', role: '', scope: '', branchId: '' })} />
+                    <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-md" onClick={() => setEditModal({ open: false, user: null, name: '', email: '', role: '', scope: '', branchId: '', authorizedBranchIds: [] })} />
                     <div className="bg-white w-full max-w-md rounded-2xl shadow-2xl relative z-10 overflow-hidden flex flex-col max-h-full animate-in zoom-in-95 duration-200">
                         <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
                             <div>
                                 <h3 className="text-lg font-black text-slate-900 tracking-tight">Edit Personnel Details</h3>
                                 <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-0.5">Modify Account Credentials & Assignment</p>
                             </div>
-                            <button onClick={() => setEditModal({ open: false, user: null, name: '', email: '', role: '', scope: '', branchId: '' })} className="p-2 hover:bg-slate-100 rounded-xl transition-all">
+                            <button onClick={() => setEditModal({ open: false, user: null, name: '', email: '', role: '', scope: '', branchId: '', authorizedBranchIds: [] })} className="p-2 hover:bg-slate-100 rounded-xl transition-all">
                                 <X size={18} />
                             </button>
                         </div>
@@ -652,7 +691,13 @@ const UsersManagement = () => {
                                             key={r.value}
                                             type="button"
                                             onClick={() => {
-                                                setEditModal({...editModal, role: r.value, scope: r.scope, branchId: r.scope === 'tenant' ? '' : editModal.branchId});
+                                                setEditModal({
+                                                    ...editModal,
+                                                    role: r.value,
+                                                    scope: r.scope,
+                                                    branchId: r.scope === 'tenant' ? '' : editModal.branchId,
+                                                    authorizedBranchIds: r.value === 'teacher' && editModal.branchId ? [editModal.branchId] : []
+                                                });
                                             }}
                                             className={`h-9 px-3 rounded-lg border font-bold text-[9px] tracking-tight uppercase transition-all ${editModal.role === r.value ? 'bg-[var(--primary)] text-white border-[var(--primary)] shadow' : 'bg-white text-slate-600 border-slate-200 hover:border-slate-350'}`}
                                         >
@@ -670,7 +715,13 @@ const UsersManagement = () => {
                                             required
                                             className="w-full h-10 bg-slate-50 border border-slate-200 rounded-lg px-3 font-semibold text-slate-900 focus:bg-white focus:ring-2 focus:ring-[var(--primary)]/10 transition-all outline-none appearance-none text-sm"
                                             value={editModal.branchId}
-                                            onChange={(e) => setEditModal({...editModal, branchId: e.target.value})}
+                                            onChange={(e) => setEditModal({
+                                                ...editModal,
+                                                branchId: e.target.value,
+                                                authorizedBranchIds: editModal.role === 'teacher'
+                                                    ? [...new Set([e.target.value, ...editModal.authorizedBranchIds].filter(Boolean))]
+                                                    : []
+                                            })}
                                         >
                                             <option value="">Select Target Campus</option>
                                             {branches.map(b => (
@@ -681,11 +732,35 @@ const UsersManagement = () => {
                                     </div>
                                 </div>
                             )}
+
+                            {editModal.role === 'teacher' && editModal.branchId && (
+                                <div className="space-y-2">
+                                    <label className="text-[10px] font-black uppercase tracking-wider text-slate-500 ml-1">Authorized Teaching Branches</label>
+                                    <div className="max-h-36 overflow-y-auto rounded-lg border border-slate-200 bg-slate-50">
+                                        {branches.map((branch) => (
+                                            <label key={branch._id} className="flex items-center gap-2 px-3 py-2 border-b border-slate-100 text-xs font-semibold">
+                                                <input
+                                                    type="checkbox"
+                                                    checked={editModal.authorizedBranchIds.includes(branch._id)}
+                                                    disabled={branch._id === editModal.branchId}
+                                                    onChange={() => setEditModal((current) => ({
+                                                        ...current,
+                                                        authorizedBranchIds: current.authorizedBranchIds.includes(branch._id)
+                                                            ? current.authorizedBranchIds.filter((id) => id !== branch._id)
+                                                            : [...current.authorizedBranchIds, branch._id]
+                                                    }))}
+                                                />
+                                                {branch.name}{branch._id === editModal.branchId ? ' (Primary)' : ''}
+                                            </label>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
                         </form>
 
                         <div className="p-4 bg-slate-50/50 border-t border-slate-100 flex justify-end gap-3">
                              <button 
-                                onClick={() => setEditModal({ open: false, user: null, name: '', email: '', role: '', scope: '', branchId: '' })}
+                                onClick={() => setEditModal({ open: false, user: null, name: '', email: '', role: '', scope: '', branchId: '', authorizedBranchIds: [] })}
                                 className="px-5 font-black text-[10px] tracking-widest uppercase text-slate-400 hover:text-slate-650 transition-colors"
                              >
                                 Discard

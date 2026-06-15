@@ -5,6 +5,7 @@ const { getExpectedScope, normalizeRole, normalizeScope } = require('../utils/ro
 const userSchema = new mongoose.Schema({
     tenantId: { type: mongoose.Schema.Types.ObjectId, ref: 'Tenant', required: function() { return this.role !== 'platform_owner'; } },
     branchId: { type: mongoose.Schema.Types.ObjectId, ref: 'Branch', required: function() { return this.scope === 'branch'; } },
+    authorizedBranchIds: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Branch' }],
     studentId: { type: mongoose.Schema.Types.ObjectId, ref: 'Student' }, // Nullable for non-students
     name: { type: String, required: true },
     email: { 
@@ -55,6 +56,14 @@ userSchema.pre('validate', function() {
     }
     if (expectedScope === 'branch' && !this.branchId) {
         this.invalidate('branchId', `Role ${this.role} requires a branch`);
+    }
+    if (this.role === 'teacher') {
+        const branchIds = [this.branchId, ...(this.authorizedBranchIds || [])]
+            .filter(Boolean)
+            .map((branchId) => String(branchId));
+        this.authorizedBranchIds = [...new Set(branchIds)];
+    } else {
+        this.authorizedBranchIds = [];
     }
     if (this.role === 'platform_owner' && (this.tenantId || this.branchId)) {
         this.invalidate('tenantId', 'Platform owners cannot belong to a tenant or branch');

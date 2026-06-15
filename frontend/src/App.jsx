@@ -10,6 +10,7 @@ const PlatformTenants = lazy(() => import('./pages/platform/Tenants'));
 const PlatformNewTenant = lazy(() => import('./pages/platform/NewTenant'));
 const PlatformTenantDetails = lazy(() => import('./pages/platform/TenantDetails'));
 const PlatformPlans = lazy(() => import('./pages/platform/Plans'));
+const PlatformBilling = lazy(() => import('./pages/platform/Billing'));
 const PlatformAuditLogs = lazy(() => import('./pages/platform/AuditLogs'));
 const PlatformMonitoring = lazy(() => import('./pages/platform/Monitoring'));
 const PlatformSettings = lazy(() => import('./pages/platform/Settings'));
@@ -18,6 +19,7 @@ const TenantBranding = lazy(() => import('./pages/tenant/Branding'));
 const TenantBranches = lazy(() => import('./pages/tenant/Branches'));
 const TenantUsers = lazy(() => import('./pages/tenant/Users'));
 const TenantAcademicYears = lazy(() => import('./pages/tenant/AcademicYears'));
+const TenantAcademicPolicy = lazy(() => import('./pages/tenant/AcademicPolicy'));
 const TenantReports = lazy(() => import('./pages/tenant/Reports'));
 const TenantPromote = lazy(() => import('./pages/tenant/Promote'));
 const TenantTransfer = lazy(() => import('./pages/tenant/Transfer'));
@@ -154,6 +156,7 @@ function App() {
                   <Route path="branches" element={<TenantBranches />} />
                   <Route path="users" element={<TenantUsers />} />
                   <Route path="academic-years" element={<TenantAcademicYears />} />
+                  <Route path="academic-policy" element={<TenantAcademicPolicy />} />
                   <Route path="reports" element={<TenantReports />} />
                   <Route path="enrollments/promote" element={<TenantPromote />} />
                   <Route path="enrollments/transfer" element={<TenantTransfer />} />
@@ -338,6 +341,7 @@ function App() {
                   <Route path="tenants/new" element={<PlatformNewTenant />} />
                   <Route path="tenants/:tenantId" element={<PlatformTenantDetails />} />
                   <Route path="plans" element={<PlatformPlans />} />
+                  <Route path="billing" element={<PlatformBilling />} />
                   <Route path="audit" element={<PlatformAuditLogs />} />
                   <Route path="monitoring" element={<PlatformMonitoring />} />
                   <Route path="settings" element={<PlatformSettings />} />

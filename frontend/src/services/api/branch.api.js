@@ -21,6 +21,11 @@ export const getAcademicYears = async () => {
     return response.data;
 };
 
+export const getTerms = async (yearId) => {
+    const response = await http.get(`/branch/academic-years/${yearId}/terms`);
+    return response.data;
+};
+
 // --- Classes ---
 export const getClasses = async () => {
     const response = await http.get('/branch/shared/classes');

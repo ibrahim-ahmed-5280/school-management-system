@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { clearStoredUser, getStoredUser } from '../utils/storage';
+import { clearStoredUser, getStoredTeacherBranchId, getStoredUser } from '../utils/storage';
 
 const DEFAULT_API_ORIGIN = 'http://localhost:5035';
 export const API_ORIGIN = import.meta.env.VITE_API_ORIGIN || DEFAULT_API_ORIGIN;
@@ -40,6 +40,9 @@ api.interceptors.request.use(
         const user = getStoredUser();
         if (user?.token) {
             config.headers.Authorization = `Bearer ${user.token}`;
+        }
+        if (user?.role === 'teacher' && config.url !== '/auth/me') {
+            config.headers['X-Branch-Id'] = getStoredTeacherBranchId() || user.branchId;
         }
         return config;
     },

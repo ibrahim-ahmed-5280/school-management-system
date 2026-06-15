@@ -10,6 +10,19 @@ const tenantSchema = new mongoose.Schema({
     type: String,
     default: "basic",
   },
+  billingContactEmail: { type: String, trim: true, lowercase: true },
+  subscription: {
+    billingCycle: { type: String, enum: ["monthly", "yearly"], default: "monthly" },
+    status: {
+      type: String,
+      enum: ["pending", "active", "past_due", "suspended", "cancelled"],
+      default: "pending",
+    },
+    currentPeriodStart: { type: Date },
+    currentPeriodEnd: { type: Date },
+    nextBillingDate: { type: Date },
+    gracePeriodEndsAt: { type: Date },
+  },
   status: {
     type: String,
     enum: ["pending", "active", "rejected", "suspended"],

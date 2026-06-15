@@ -10,6 +10,7 @@ const Student = require('../models/Student');
 const Enrollment = require('../models/Enrollment');
 const { logActivity } = require('../utils/logger');
 const { generateBulkInvoices, getRevenueReport } = require('../services/financeService');
+const { normalizeBillingSchedule, resolveBillingPeriod } = require('../utils/billingPeriods');
 const mongoose = require('mongoose');
 
 const validateFinanceContext = async ({ tenantId, branchId, classId, academicYearId, studentId }) => {
@@ -64,7 +65,7 @@ const validateFinanceContext = async ({ tenantId, branchId, classId, academicYea
 // ==========================================
 
 const createFeeStructure = asyncHandler(async (req, res) => {
-    const { branchId, classId, academicYearId, feeItems } = req.body;
+    const { name, branchId, classId, academicYearId, feeItems, billingFrequency, billingPeriods } = req.body;
 
     if (!branchId || !classId || !academicYearId || !feeItems) {
         res.status(400);
@@ -77,6 +78,13 @@ const createFeeStructure = asyncHandler(async (req, res) => {
     await validateFinanceContext({ tenantId: req.tenantId, branchId, classId, academicYearId });
 
     const totalAmount = feeItems.reduce((acc, item) => acc + (parseFloat(item.amount) || 0), 0);
+    let schedule;
+    try {
+        schedule = normalizeBillingSchedule({ billingFrequency, billingPeriods, totalAmount });
+    } catch (error) {
+        res.status(400);
+        throw error;
+    }
 
     try {
         const feeStructure = await FeeStructure.create({
@@ -84,6 +92,8 @@ const createFeeStructure = asyncHandler(async (req, res) => {
             branchId,
             classId,
             academicYearId,
+            name: String(name || '').trim() || 'Standard Fee Structure',
+            ...schedule,
             feeItems,
             totalAmount
         });
@@ -143,12 +153,34 @@ const updateFeeStructure = asyncHandler(async (req, res) => {
         throw new Error('Access denied for this finance resource.');
     }
 
-    const { feeItems } = req.body;
+    const { name, feeItems, billingFrequency, billingPeriods } = req.body;
     const before = JSON.parse(JSON.stringify(structure));
-    
+
+    if (name !== undefined) {
+        structure.name = String(name).trim() || 'Standard Fee Structure';
+    }
     if (feeItems) {
+        if (!Array.isArray(feeItems) || feeItems.length === 0 || feeItems.some((item) => !item.name || Number(item.amount) < 0)) {
+            res.status(400);
+            throw new Error('feeItems must contain valid names and non-negative amounts');
+        }
         structure.feeItems = feeItems;
         structure.totalAmount = feeItems.reduce((acc, item) => acc + (parseFloat(item.amount) || 0), 0);
+    }
+    if (billingFrequency !== undefined || billingPeriods !== undefined || feeItems) {
+        let schedule;
+        try {
+            schedule = normalizeBillingSchedule({
+                billingFrequency: billingFrequency ?? structure.billingFrequency,
+                billingPeriods: billingPeriods ?? structure.billingPeriods,
+                totalAmount: structure.totalAmount
+            });
+        } catch (error) {
+            res.status(400);
+            throw error;
+        }
+        structure.billingFrequency = schedule.billingFrequency;
+        structure.billingPeriods = schedule.billingPeriods;
     }
 
     await structure.save();
@@ -223,7 +255,7 @@ const updateFinancePolicies = asyncHandler(async (req, res) => {
 });
 
 const triggerBulkInvoices = asyncHandler(async (req, res) => {
-    const { branchId, academicYearId, classId, studentId, dueDate } = req.body;
+    const { branchId, academicYearId, classId, studentId, feeStructureId, billingPeriodKey, dueDate } = req.body;
 
     if (!academicYearId) {
         res.status(400);
@@ -252,12 +284,52 @@ const triggerBulkInvoices = asyncHandler(async (req, res) => {
         throw new Error('Invalid invoice generation target.');
     }
 
+    let selectedFeeStructure = null;
+    if (feeStructureId) {
+        const structureQuery = {
+            _id: feeStructureId,
+            tenantId: req.tenantId,
+            academicYearId
+        };
+        if (branchId) structureQuery.branchId = branchId;
+        if (classId) structureQuery.classId = classId;
+
+        selectedFeeStructure = await FeeStructure.findOne(structureQuery);
+        if (!selectedFeeStructure) {
+            res.status(403);
+            throw new Error('Access denied for this finance resource.');
+        }
+
+        if (studentId) {
+            const matchingEnrollment = await Enrollment.exists({
+                tenantId: req.tenantId,
+                studentId,
+                academicYearId,
+                branchId: selectedFeeStructure.branchId,
+                classId: selectedFeeStructure.classId
+            });
+            if (!matchingEnrollment) {
+                res.status(400);
+                throw new Error('Selected fee structure does not match the student enrollment.');
+            }
+        }
+
+        try {
+            resolveBillingPeriod(selectedFeeStructure, billingPeriodKey);
+        } catch (error) {
+            res.status(400);
+            throw error;
+        }
+    }
+
     const result = await generateBulkInvoices({
         tenantId: req.tenantId,
-        branchId,
+        branchId: branchId || selectedFeeStructure?.branchId,
         academicYearId,
         classId,
         studentId,
+        feeStructureId,
+        billingPeriodKey,
         dueDate
     });
 
@@ -351,17 +423,40 @@ const getPayments = asyncHandler(async (req, res) => {
 
 const getPaymentsSummary = asyncHandler(async (req, res) => {
     const { branchId, academicYearId, from, to } = req.query;
-    const match = { tenantId: new mongoose.Types.ObjectId(req.tenantId) };
+    const match = {
+        tenantId: new mongoose.Types.ObjectId(req.tenantId),
+        status: { $in: ['ACTIVE', 'REVERSAL'] }
+    };
     if (branchId) match.branchId = new mongoose.Types.ObjectId(branchId);
-    if (academicYearId) match.academicYearId = new mongoose.Types.ObjectId(academicYearId);
     if (from || to) {
         match.createdAt = {};
         if (from) match.createdAt.$gte = new Date(from);
         if (to) match.createdAt.$lte = new Date(to);
     }
 
+    const scopedPaymentPipeline = [{ $match: match }];
+    if (academicYearId) {
+        scopedPaymentPipeline.push(
+            {
+                $lookup: {
+                    from: 'invoices',
+                    localField: 'invoiceId',
+                    foreignField: '_id',
+                    as: 'invoice'
+                }
+            },
+            { $unwind: '$invoice' },
+            {
+                $match: {
+                    'invoice.tenantId': new mongoose.Types.ObjectId(req.tenantId),
+                    'invoice.academicYearId': new mongoose.Types.ObjectId(academicYearId)
+                }
+            }
+        );
+    }
+
     const summary = await Payment.aggregate([
-        { $match: match },
+        ...scopedPaymentPipeline,
         { 
             $group: { 
                 _id: '$method', 
@@ -372,7 +467,7 @@ const getPaymentsSummary = asyncHandler(async (req, res) => {
     ]);
 
     const branchTotals = await Payment.aggregate([
-        { $match: match },
+        ...scopedPaymentPipeline,
         {
             $group: {
                 _id: '$branchId',

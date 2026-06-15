@@ -27,9 +27,17 @@ const buildSessionPayload = (user, tenant = null) => ({
     scope: user.scope,
     tenantId: user.tenantId,
     branchId: user.branchId,
+    authorizedBranchIds: user.authorizedBranchIds || [],
     students: user.students || [],
     mustChangePassword: Boolean(user.mustChangePassword),
     permissions: getEffectivePermissions(user),
+    billing: tenant ? {
+        billingCycle: tenant.subscription?.billingCycle || 'monthly',
+        subscriptionStatus: tenant.subscription?.status || 'pending',
+        currentPeriodEnd: tenant.subscription?.currentPeriodEnd || null,
+        nextBillingDate: tenant.subscription?.nextBillingDate || null,
+        gracePeriodEndsAt: tenant.subscription?.gracePeriodEndsAt || null
+    } : null,
     branding: tenant ? {
         tenantName: tenant.name,
         primaryColor: tenant.primaryColor,
@@ -81,6 +89,13 @@ const registerTenant = async (req, res) => {
             isActive: false,
             isApproved: false,
             subscriptionLimits: limitsFromPlan(plan),
+            billingContactEmail: normalizedEmail,
+            subscription: {
+                billingCycle: ['monthly', 'yearly'].includes(req.body.billingCycle)
+                    ? req.body.billingCycle
+                    : (['monthly', 'yearly'].includes(plan.billingCycle) ? plan.billingCycle : 'monthly'),
+                status: 'pending'
+            },
             statusHistory: [{ status: 'pending', reason: 'Public school registration submitted' }]
         });
 

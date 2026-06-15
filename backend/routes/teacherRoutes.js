@@ -40,6 +40,7 @@ router.get('/timetable/today', requirePermission('teacher.schedule.view'), timet
 router.get('/timetable/week', requirePermission('teacher.schedule.view'), timetableController.getTeacherTimetableWeek);
 
 // --- Assignments ---
+router.get('/branches', requirePermission('teacher.dashboard.view'), teacherController.getAuthorizedBranches);
 router.get('/assignments', requirePermission('teacher.dashboard.view'), teacherController.getTeacherAssignments);
 
 // --- Exports ---

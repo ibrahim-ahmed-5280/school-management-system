@@ -118,7 +118,7 @@ const GradingPolicy = () => {
                         <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-10 text-center">
                             <FileSpreadsheet size={38} className="mx-auto mb-3 text-slate-300" />
                             <p className="font-bold text-slate-700">No grading scale configured</p>
-                            <p className="mt-1 text-sm text-slate-500">Ask the branch admin to configure grade thresholds.</p>
+                            <p className="mt-1 text-sm text-slate-500">Ask the school super admin to configure grade thresholds.</p>
                         </div>
                     ) : (
                         <Table headers={['Grade', 'Percentage Range', 'Status']}>
@@ -153,7 +153,7 @@ const GradingPolicy = () => {
                             </div>
                             <div className="flex gap-3">
                                 <Lock size={18} className="mt-1 shrink-0 text-[var(--primary)]" />
-                                <p>Teachers cannot edit thresholds. Branch admins manage these rules for consistency.</p>
+                                <p>Teachers cannot edit thresholds. School super admins manage these rules for consistency.</p>
                             </div>
                             <div className="flex gap-3">
                                 <CheckCircle2 size={18} className="mt-1 shrink-0 text-[var(--primary)]" />
@@ -168,7 +168,7 @@ const GradingPolicy = () => {
                             <div>
                                 <h3 className="font-black text-amber-900">Need a change?</h3>
                                 <p className="mt-1 text-sm font-medium leading-6 text-amber-800">
-                                    Contact the branch admin before entering final results if the grading thresholds look incorrect.
+                                    Contact the school super admin before entering final results if the grading thresholds look incorrect.
                                 </p>
                             </div>
                         </div>

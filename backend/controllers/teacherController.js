@@ -16,6 +16,7 @@ const { createNotification } = require('../services/notificationService');
 const { logAction } = require('../services/auditLogService');
 const gradingService = require('../services/gradingService');
 const exportService = require('../services/exportService');
+const { resolvePassMarkPercent } = require('../utils/grading');
 
 // Helper for standard responses
 const sendResponse = (res, success, data = null, message = '') => {
@@ -24,6 +25,20 @@ const sendResponse = (res, success, data = null, message = '') => {
 
 const sendError = (res, code, message, errors = []) => {
     return res.status(code).json({ success: false, message, errors });
+};
+
+exports.getAuthorizedBranches = async (req, res) => {
+    try {
+        const branchIds = [...new Set([req.user.branchId, ...(req.user.authorizedBranchIds || [])].filter(Boolean).map(String))];
+        const branches = await require('../models/Branch').find({
+            _id: { $in: branchIds },
+            tenantId: req.tenantId,
+            isActive: true
+        }).select('name code');
+        sendResponse(res, true, branches);
+    } catch (error) {
+        sendError(res, 500, error.message);
+    }
 };
 
 const normalizeStatus = (status) => String(status || '').toUpperCase();
@@ -282,8 +297,9 @@ const processBulkResults = async (req, examId, results) => {
         subjectId: exam.subjectId,
         academicYearId: exam.academicYearId
     });
-    const passMarkPercent = curriculum?.passMarkPercent || 40;
+    const passMarkPercent = resolvePassMarkPercent(curriculum);
     const maxScore = resolveMaxScore(exam);
+    const gradingRules = await gradingService.getGradingRules(req.tenantId);
 
     const studentIds = results.map(r => r.studentId);
     const existingResults = await Result.find({
@@ -319,6 +335,7 @@ const processBulkResults = async (req, examId, results) => {
 
         const percentage = maxScore > 0 ? (marks / maxScore) * 100 : 0;
         const status = percentage >= passMarkPercent ? 'PASS' : 'FAIL';
+        const grade = gradingService.gradeForPercentage(percentage, gradingRules);
         const createdByTeacherId = existing?.createdByTeacherId || existing?.gradedByTeacherId || req.user._id;
 
         const doc = await Result.findOneAndUpdate(
@@ -334,6 +351,7 @@ const processBulkResults = async (req, examId, results) => {
                     percentage: Math.round(percentage * 100) / 100,
                     passMarkPercent,
                     status,
+                    grade,
                     isAbsent,
                     remarks: row.remarks,
                     createdByTeacherId,
@@ -571,7 +589,7 @@ exports.getClassResults = async (req, res) => {
                 { academicYearId: null }
             ]
         });
-        const passMarkPercent = curriculum?.passMarkPercent || 40;
+        const passMarkPercent = resolvePassMarkPercent(curriculum);
 
         const rows = students.map(student => {
             let totalMarks = 0;

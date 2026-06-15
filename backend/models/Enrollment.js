@@ -7,7 +7,7 @@ const enrollmentSchema = new mongoose.Schema({
     classId: { type: mongoose.Schema.Types.ObjectId, ref: 'Class', required: true },
     sectionId: { type: mongoose.Schema.Types.ObjectId, ref: 'Section' },
     academicYearId: { type: mongoose.Schema.Types.ObjectId, ref: 'AcademicYear', required: true },
-    status: { type: String, enum: ['Current', 'Active', 'active', 'Promoted', 'Transferred', 'Withdrawn'], default: 'Current' },
+    status: { type: String, enum: ['Current', 'Active', 'active', 'Promoted', 'Transferred', 'Withdrawn', 'Graduated'], default: 'Current' },
     createdAt: { type: Date, default: Date.now }
 });
 

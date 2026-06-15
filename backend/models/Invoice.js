@@ -5,6 +5,9 @@ const invoiceSchema = new mongoose.Schema({
     branchId: { type: mongoose.Schema.Types.ObjectId, ref: 'Branch', required: true },
     studentId: { type: mongoose.Schema.Types.ObjectId, ref: 'Student', required: true },
     academicYearId: { type: mongoose.Schema.Types.ObjectId, ref: 'AcademicYear', required: true },
+    feeStructureId: { type: mongoose.Schema.Types.ObjectId, ref: 'FeeStructure' },
+    billingPeriodKey: { type: String, required: true, default: 'YEARLY' },
+    billingPeriodLabel: { type: String, required: true, default: 'Annual' },
     items: [{
         name: { type: String, required: true },
         amount: { type: Number, required: true }
@@ -21,8 +24,8 @@ const invoiceSchema = new mongoose.Schema({
     createdAt: { type: Date, default: Date.now }
 });
 
-// Avoid duplicate invoices for same student in same year/branch
-invoiceSchema.index({ tenantId: 1, branchId: 1, studentId: 1, academicYearId: 1 }, { unique: true });
+// Avoid duplicate invoices for the same student and billing period.
+invoiceSchema.index({ tenantId: 1, branchId: 1, studentId: 1, academicYearId: 1, billingPeriodKey: 1 }, { unique: true });
 invoiceSchema.index({ tenantId: 1, branchId: 1, status: 1 });
 
 module.exports = mongoose.model('Invoice', invoiceSchema);

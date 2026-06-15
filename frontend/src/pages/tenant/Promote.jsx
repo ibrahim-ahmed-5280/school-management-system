@@ -4,7 +4,8 @@ import {
   ArrowRight, 
   Loader2, 
   CheckCircle2, 
-  AlertTriangle
+  AlertTriangle,
+  GraduationCap
 } from 'lucide-react';
 import tenantService from '../../services/tenantService';
 
@@ -23,7 +24,7 @@ const Promote = () => {
         toAcademicYearId: '',
         rules: {
             classMap: [
-                { fromClassId: '', toClassId: '' }
+                { fromClassId: '', toClassId: '', graduate: false }
             ]
         }
     });
@@ -60,9 +61,13 @@ const Promote = () => {
 
     const handlePromote = async (e) => {
         e.preventDefault();
-        const activeMaps = promoteData.rules.classMap.filter((mapping) => mapping.fromClassId && mapping.toClassId);
+        const activeMaps = promoteData.rules.classMap.filter((mapping) => mapping.fromClassId && (mapping.toClassId || mapping.graduate));
         if (activeMaps.length === 0) {
-            alert('Please add at least one valid class mapping');
+            alert('Please add at least one valid promotion or graduation mapping');
+            return;
+        }
+        if (activeMaps.some((mapping) => !mapping.graduate) && !promoteData.toAcademicYearId) {
+            alert('Select a destination year for class promotions');
             return;
         }
         setSubmitting(true);
@@ -98,7 +103,7 @@ const Promote = () => {
                          <h2 className="text-lg font-black text-slate-900">Promotion Successful</h2>
                          <p className="text-slate-400 font-bold uppercase tracking-wider text-[10px]">
                             {stats
-                                ? `${stats.promoted || 0} promoted, ${stats.skippedExisting || 0} already enrolled, ${stats.failed || 0} failed.`
+                                ? `${stats.promoted || 0} promoted, ${stats.graduated || 0} graduated, ${stats.skippedExisting || 0} already enrolled, ${stats.failed || 0} failed.`
                                 : 'New enrollments initialized for target classes.'}
                          </p>
                     </div>
@@ -117,7 +122,6 @@ const Promote = () => {
                             <div className="space-y-1.5">
                                 <label className="text-[10px] font-black uppercase tracking-wider text-slate-500 ml-1">Source Timeline</label>
                                 <select 
-                                    required
                                     className="w-full h-10 bg-slate-50 border border-slate-200 rounded-lg px-3 font-semibold text-slate-900 outline-none focus:ring-2 focus:ring-[var(--primary)]/10 focus:bg-white transition-all text-sm"
                                     value={promoteData.fromAcademicYearId}
                                     onChange={(e) => setPromoteData({...promoteData, fromAcademicYearId: e.target.value})}
@@ -150,7 +154,7 @@ const Promote = () => {
                                     setSelectedBranchId(e.target.value);
                                     setPromoteData((current) => ({
                                         ...current,
-                                        rules: { classMap: [{ fromClassId: '', toClassId: '' }] }
+                                        rules: { classMap: [{ fromClassId: '', toClassId: '', graduate: false }] }
                                     }));
                                 }}
                             >
@@ -173,7 +177,7 @@ const Promote = () => {
                                     onClick={() => setPromoteData((current) => ({
                                         ...current,
                                         rules: {
-                                            classMap: [...current.rules.classMap, { fromClassId: '', toClassId: '' }]
+                                            classMap: [...current.rules.classMap, { fromClassId: '', toClassId: '', graduate: false }]
                                         }
                                     }))}
                                     className="text-[10px] font-black uppercase tracking-wider text-[var(--primary)]"
@@ -205,9 +209,26 @@ const Promote = () => {
                                          </div>
                                          <ArrowRight className="text-slate-300 shrink-0 hidden sm:block" size={14} />
                                          <div className="flex-1 w-full p-2">
-                                            <p className="text-[8px] font-black text-[var(--primary)] uppercase mb-1.5 ml-1">Target Class</p>
+                                            <div className="mb-1.5 flex items-center justify-between gap-2 px-1">
+                                                <p className="text-[8px] font-black text-[var(--primary)] uppercase">Target Class</p>
+                                                <label className="flex cursor-pointer items-center gap-1.5 text-[8px] font-black uppercase text-slate-500">
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={map.graduate === true}
+                                                        onChange={(e) => {
+                                                            const newMap = promoteData.rules.classMap.map((item, mapIndex) => (
+                                                                mapIndex === idx ? { ...item, graduate: e.target.checked, toClassId: e.target.checked ? '' : item.toClassId } : item
+                                                            ));
+                                                            setPromoteData({ ...promoteData, rules: { classMap: newMap } });
+                                                        }}
+                                                        className="accent-[var(--primary)]"
+                                                    />
+                                                    Graduate
+                                                </label>
+                                            </div>
                                             <select
-                                                required
+                                                required={!map.graduate}
+                                                disabled={map.graduate}
                                                 className="w-full h-9 bg-slate-50 border border-slate-200 rounded-lg px-3 text-xs font-semibold font-mono outline-none focus:ring-2 focus:ring-[var(--primary)]/10 focus:bg-white transition-all"
                                                 value={map.toClassId}
                                                 onChange={(e) => {
@@ -216,7 +237,7 @@ const Promote = () => {
                                                     setPromoteData({...promoteData, rules: { classMap: newMap }});
                                                 }}
                                             >
-                                                <option value="">Select target class</option>
+                                                <option value="">{map.graduate ? 'Graduates school' : 'Select target class'}</option>
                                                 {classes.map((classItem) => (
                                                     <option key={classItem._id} value={classItem._id}>{classItem.name}</option>
                                                 ))}
@@ -244,7 +265,7 @@ const Promote = () => {
                              <AlertTriangle className="shrink-0 mt-0.5" size={18} />
                              <div>
                                 <p className="text-xs font-black mb-0.5">Read Carefully: Historical Data Integrity</p>
-                                <p className="text-[9px] leading-relaxed font-semibold uppercase tracking-wider opacity-85">This action creates new enrollment records for all matching students. Existing enrollments will be marked as 'Promoted'. This process is permanent and affects institutional analytics.</p>
+                                <p className="text-[9px] leading-relaxed font-semibold uppercase tracking-wider opacity-85">Promotions create new enrollments and preserve the old records. Graduation is only allowed for the configured final grade and does not create a new enrollment.</p>
                              </div>
                         </div>
 
@@ -257,8 +278,8 @@ const Promote = () => {
                              >
                                 {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : (
                                     <>
-                                        EXECUTE NETWORK PROMOTION
-                                        <ArrowUpCircle size={14} />
+                                        EXECUTE ACADEMIC TRANSITION
+                                        <GraduationCap size={14} />
                                     </>
                                 )}
                              </button>

@@ -103,6 +103,7 @@ const Invoices = () => {
                             <th className="px-6 py-4">Invoice #</th>
                             <th className="px-6 py-4">Student</th>
                             <th className="px-6 py-4">Date</th>
+                            <th className="px-6 py-4">Billing Period</th>
                             <th className="px-6 py-4 text-right">Total</th>
                             <th className="px-6 py-4 text-right">Paid</th>
                             <th className="px-6 py-4 text-right">Balance</th>
@@ -112,9 +113,9 @@ const Invoices = () => {
                     </thead>
                     <tbody className="divide-y divide-slate-100">
                         {loading ? (
-                            <tr><td colSpan="8" className="px-6 py-8 text-center text-slate-500">Loading invoices...</td></tr>
+                            <tr><td colSpan="9" className="px-6 py-8 text-center text-slate-500">Loading invoices...</td></tr>
                         ) : invoices.length === 0 ? (
-                            <tr><td colSpan="8" className="px-6 py-8 text-center text-slate-400">No invoices found matching criteria</td></tr>
+                            <tr><td colSpan="9" className="px-6 py-8 text-center text-slate-400">No invoices found matching criteria</td></tr>
                         ) : (
                             invoices.map(inv => (
                                 <tr key={inv._id} className="hover:bg-slate-50 transition-colors group">
@@ -123,6 +124,7 @@ const Invoices = () => {
                                         {inv.studentId && typeof inv.studentId === 'object' ? `${inv.studentId.firstName} ${inv.studentId.lastName}` : (inv.studentName || 'N/A')}
                                     </td>
                                     <td className="px-6 py-4 text-slate-500 text-sm">{inv.dueDate ? new Date(inv.dueDate).toLocaleDateString() : 'N/A'}</td>
+                                    <td className="px-6 py-4 text-slate-600 text-sm">{inv.billingPeriodLabel || 'Annual'}</td>
                                     <td className="px-6 py-4 text-right text-slate-900">${inv.totalAmount?.toLocaleString()}</td>
                                     <td className="px-6 py-4 text-right text-emerald-600">${inv.paidAmount?.toLocaleString()}</td>
                                     <td className="px-6 py-4 text-right text-rose-500 font-bold">${(inv.totalAmount - inv.paidAmount)?.toLocaleString()}</td>

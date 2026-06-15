@@ -10,6 +10,7 @@ const resultSchema = new mongoose.Schema({
     percentage: { type: Number, default: 0 },
     passMarkPercent: { type: Number, default: 40 }, 
     status: { type: String, enum: ['PASS', 'FAIL'], uppercase: true },
+    grade: { type: String, trim: true },
     isAbsent: { type: Boolean, default: false },
     remarks: { type: String },
     createdByTeacherId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },

@@ -26,6 +26,8 @@ const Plans = () => {
     name: '',
     slug: '',
     price: '',
+    monthlyPrice: '',
+    yearlyPrice: '',
     maxBranches: '',
     maxStudents: '',
     maxUsers: '',
@@ -63,6 +65,8 @@ const Plans = () => {
         name: plan.name,
         slug: plan.slug,
         price: plan.price,
+        monthlyPrice: plan.monthlyPrice ?? plan.price,
+        yearlyPrice: plan.yearlyPrice ?? '',
         maxBranches: plan.maxBranches,
         maxStudents: plan.maxStudents,
         maxUsers: plan.maxUsers,
@@ -75,7 +79,7 @@ const Plans = () => {
     } else {
       setEditingPlan(null);
       setFormData({
-        name: '', slug: '', price: '', maxBranches: '', maxStudents: '', maxUsers: '', 
+        name: '', slug: '', price: '', monthlyPrice: '', yearlyPrice: '', maxBranches: '', maxStudents: '', maxUsers: '',
         storage: '5GB', hasPrioritySupport: false, icon: 'Zap', color: 'text-blue-600', bg: 'bg-blue-50'
       });
     }
@@ -86,9 +90,9 @@ const Plans = () => {
     e.preventDefault();
     try {
       if (editingPlan) {
-        await platformService.updatePlan(editingPlan._id, formData);
+        await platformService.updatePlan(editingPlan._id, { ...formData, price: formData.monthlyPrice });
       } else {
-        await platformService.createPlan(formData);
+        await platformService.createPlan({ ...formData, price: formData.monthlyPrice });
       }
       setShowModal(false);
       fetchPlans();
@@ -153,10 +157,11 @@ const Plans = () => {
               </span>
               <div className="mt-2 flex items-baseline gap-0.5">
                 <span className="text-2xl font-black text-slate-900 leading-none">
-                  {typeof plan.price === 'number' ? `$${plan.price}` : plan.price}
+                  {typeof plan.monthlyPrice === 'number' ? `$${plan.monthlyPrice}` : plan.price}
                 </span>
-                {typeof plan.price === 'number' && <span className="text-slate-500 font-bold text-xs">/mo</span>}
+                {typeof plan.monthlyPrice === 'number' && <span className="text-slate-500 font-bold text-xs">/mo</span>}
               </div>
+              {typeof plan.yearlyPrice === 'number' && <p className="text-xs font-bold text-slate-500 mt-1">${plan.yearlyPrice}/year</p>}
             </div>
             
             <div className="p-5 space-y-3.5 flex-1 bg-white">
@@ -251,23 +256,34 @@ const Plans = () => {
                 <div className="flex flex-col gap-1.5">
                   <label className="text-[10px] font-black uppercase tracking-wider text-slate-500 ml-1">Monthly Cost ($)</label>
                   <input 
-                    type="text" required
+                    type="number" min="0" step="0.01" required
                     className="h-10 bg-slate-50 border border-slate-200 rounded-lg px-3 text-slate-900 font-semibold text-sm outline-none focus:ring-2 focus:ring-blue-500/10 focus:bg-white transition"
-                    value={formData.price}
+                    value={formData.monthlyPrice}
                     placeholder="e.g. 149"
-                    onChange={e => setFormData({...formData, price: e.target.value})}
+                    onChange={e => setFormData({...formData, monthlyPrice: e.target.value})}
                   />
                 </div>
                 <div className="flex flex-col gap-1.5">
-                  <label className="text-[10px] font-black uppercase tracking-wider text-slate-500 ml-1">Storage Allocation</label>
+                  <label className="text-[10px] font-black uppercase tracking-wider text-slate-500 ml-1">Yearly Cost ($)</label>
                   <input 
-                    type="text" required
+                    type="number" min="0" step="0.01" required
                     className="h-10 bg-slate-50 border border-slate-200 rounded-lg px-3 text-slate-900 font-semibold text-sm outline-none focus:ring-2 focus:ring-blue-500/10 focus:bg-white transition"
-                    value={formData.storage}
-                    placeholder="e.g. 100GB"
-                    onChange={e => setFormData({...formData, storage: e.target.value})}
+                    value={formData.yearlyPrice}
+                    placeholder="e.g. 1490"
+                    onChange={e => setFormData({...formData, yearlyPrice: e.target.value})}
                   />
                 </div>
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <label className="text-[10px] font-black uppercase tracking-wider text-slate-500 ml-1">Storage Allocation</label>
+                <input
+                  type="text" required
+                  className="h-10 bg-slate-50 border border-slate-200 rounded-lg px-3 text-slate-900 font-semibold text-sm outline-none focus:ring-2 focus:ring-blue-500/10 focus:bg-white transition"
+                  value={formData.storage}
+                  placeholder="e.g. 100GB"
+                  onChange={e => setFormData({...formData, storage: e.target.value})}
+                />
               </div>
 
               <div className="grid grid-cols-3 gap-4">

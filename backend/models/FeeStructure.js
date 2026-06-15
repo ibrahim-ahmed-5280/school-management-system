@@ -5,6 +5,17 @@ const feeStructureSchema = new mongoose.Schema({
     branchId: { type: mongoose.Schema.Types.ObjectId, ref: 'Branch', required: true },
     academicYearId: { type: mongoose.Schema.Types.ObjectId, ref: 'AcademicYear', required: true },
     classId: { type: mongoose.Schema.Types.ObjectId, ref: 'Class', required: true },
+    name: { type: String, trim: true, default: 'Standard Fee Structure' },
+    billingFrequency: {
+        type: String,
+        enum: ['YEARLY', 'MONTHLY', 'EVERY_TWO_MONTHS', 'QUARTERLY', 'TERM', 'CUSTOM'],
+        default: 'YEARLY'
+    },
+    billingPeriods: [{
+        key: { type: String, required: true },
+        label: { type: String, required: true, trim: true },
+        amount: { type: Number, required: true, min: 0 }
+    }],
     feeItems: [{
         name: { type: String, required: true },
         amount: { type: Number, required: true, min: 0 }

@@ -4,6 +4,7 @@ import {
     createExam, 
     getClasses, 
     getCurrentAcademicYear, 
+    getTerms,
     getSubjects,
     getExamCategories,
     getClassSubjects,
@@ -22,6 +23,7 @@ const Exams = () => {
     const [subjects, setSubjects] = useState([]);
     const [classSubjects, setClassSubjects] = useState([]); // Curriculum data
     const [currentYear, setCurrentYear] = useState(null);
+    const [terms, setTerms] = useState([]);
     const [loading, setLoading] = useState(true);
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [toast, setToast] = useState(null);
@@ -34,7 +36,8 @@ const Exams = () => {
         classIds: [], // New for multi-select
         subjectId: '', 
         date: '', 
-        academicYearId: '' 
+        academicYearId: '',
+        termId: ''
     });
     const [categoryForm, setCategoryForm] = useState({ name: '', maxScore: 100, description: '' });
 
@@ -57,6 +60,8 @@ const Exams = () => {
             setClassSubjects(curriculumRes.data || []);
             if (yearRes.data) {
                 setExamForm(prev => ({ ...prev, academicYearId: yearRes.data._id }));
+                const termRes = await getTerms(yearRes.data._id);
+                setTerms(termRes.data || []);
             }
         } catch {
             setToast({ type: 'error', message: 'Failed to load data' });
@@ -217,7 +222,7 @@ const Exams = () => {
                                             </td>
                                             <td className="px-8 py-6">
                                                 <p className="text-xs font-bold text-slate-600">{exam.date ? new Date(exam.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) : 'Flexible Date'}</p>
-                                                <p className="text-[10px] font-black uppercase text-slate-400 mt-1">{currentYear?.name}</p>
+                                                <p className="text-[10px] font-black uppercase text-slate-400 mt-1">{exam.termId?.name || currentYear?.name}</p>
                                             </td>
                                             <td className="px-8 py-6">
                                                 <Badge 
@@ -329,6 +334,12 @@ const Exams = () => {
                                 value={examForm.examCategoryId}
                                 onChange={e => setExamForm({...examForm, examCategoryId: e.target.value})}
                                 required
+                            />
+                            <Select
+                                label="Academic Term (Optional)"
+                                options={terms.map(term => ({ value: term._id, label: term.name }))}
+                                value={examForm.termId}
+                                onChange={e => setExamForm({...examForm, termId: e.target.value})}
                             />
                         </div>
 

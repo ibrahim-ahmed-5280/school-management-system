@@ -15,7 +15,10 @@ const Subject = require('../models/Subject');
 const Section = require('../models/Section');
 const ClassSubject = require('../models/ClassSubject');
 const ExamCategory = require('../models/ExamCategory');
+const Term = require('../models/Term');
+const GradingPolicy = require('../models/GradingPolicy');
 const { logAction } = require('../services/auditLogService');
+const { resolvePassMarkPercent } = require('../utils/grading');
 
 const ACTIVE_ENROLLMENT_STATUSES = ['Current', 'Active', 'active'];
 
@@ -254,6 +257,7 @@ exports.createBranchUser = async (req, res) => {
             passwordHash: password, // Pre-save hook will hash this
             role: role.toLowerCase(),
             scope: 'branch',
+            authorizedBranchIds: role.toLowerCase() === 'teacher' ? [req.user.branchId] : [],
             isActive: true
         });
 
@@ -291,6 +295,13 @@ exports.getBranchUsers = async (req, res) => {
             branchId: req.user.branchId
         };
         if (role) query.role = role.toLowerCase();
+        if (String(role || '').toLowerCase() === 'teacher') {
+            delete query.branchId;
+            query.$or = [
+                { branchId: req.user.branchId },
+                { authorizedBranchIds: req.user.branchId }
+            ];
+        }
 
         const users = await User.find(query).select('-passwordHash');
         sendResponse(res, true, users);
@@ -426,7 +437,8 @@ exports.createTeacherWithAssignments = async (req, res) => {
             email: normalizedEmail,
             passwordHash: password,
             role: 'teacher',
-            scope: 'branch'
+            scope: 'branch',
+            authorizedBranchIds: [req.user.branchId]
         });
         await newUser.save();
         createdUserId = newUser._id;
@@ -483,7 +495,12 @@ exports.updateTeacherAssignments = async (req, res) => {
         const { assignments } = req.body;
         const { teacherUserId } = req.params;
 
-        const teacher = await User.findOne({ _id: teacherUserId, tenantId: req.user.tenantId, branchId: req.user.branchId, role: 'teacher' });
+        const teacher = await User.findOne({
+            _id: teacherUserId,
+            tenantId: req.user.tenantId,
+            role: 'teacher',
+            $or: [{ branchId: req.user.branchId }, { authorizedBranchIds: req.user.branchId }]
+        });
         if (!teacher) {
             return sendError(res, 403, 'Access denied for this branch resource.');
         }
@@ -573,7 +590,12 @@ exports.getTeacherAssignments = async (req, res) => {
     try {
         const { teacherUserId } = req.params;
 
-        const teacher = await User.findOne({ _id: teacherUserId, tenantId: req.user.tenantId, branchId: req.user.branchId, role: 'teacher' });
+        const teacher = await User.findOne({
+            _id: teacherUserId,
+            tenantId: req.user.tenantId,
+            role: 'teacher',
+            $or: [{ branchId: req.user.branchId }, { authorizedBranchIds: req.user.branchId }]
+        });
         if (!teacher) {
             return sendError(res, 403, 'Access denied for this branch resource.');
         }
@@ -668,6 +690,15 @@ exports.promoteStudents = async (req, res) => {
         if (String(fromAcademicYearId) === String(toAcademicYearId)) {
             return sendError(res, 400, 'Target academic year must be different from source year');
         }
+        const [fromYear, toYear, academicPolicy] = await Promise.all([
+            AcademicYear.findOne({ _id: fromAcademicYearId, tenantId: req.user.tenantId }),
+            AcademicYear.findOne({ _id: toAcademicYearId, tenantId: req.user.tenantId }),
+            GradingPolicy.findOne({ tenantId: req.user.tenantId }).lean()
+        ]);
+        if (!fromYear || !toYear) {
+            return sendError(res, 403, 'Access denied for this academic resource.');
+        }
+        const finalGradeLevel = String(academicPolicy?.finalGradeLevel || '12').trim().toLowerCase();
 
         // Logic:
         // 1. For each map entry, find Enrollments in fromClass + fromYear
@@ -684,6 +715,19 @@ exports.promoteStudents = async (req, res) => {
 
         for (const map of rules.classMap) {
             const { fromClassId, toClassId } = map;
+            if (!fromClassId || !toClassId) {
+                return sendError(res, 400, 'Each promotion mapping requires a source and target class');
+            }
+            const [fromClass, toClass] = await Promise.all([
+                Class.findOne({ _id: fromClassId, tenantId: req.user.tenantId, branchId: req.user.branchId }),
+                Class.findOne({ _id: toClassId, tenantId: req.user.tenantId, branchId: req.user.branchId })
+            ]);
+            if (!fromClass || !toClass) {
+                return sendError(res, 403, 'Access denied for this branch resource.');
+            }
+            if (String(fromClass.gradeLevel || '').trim().toLowerCase() === finalGradeLevel) {
+                return sendError(res, 400, `${fromClass.name} is the configured final grade. Use the school graduation operation instead.`);
+            }
 
             const enrollments = await Enrollment.find({
                 tenantId: req.user.tenantId,
@@ -725,7 +769,7 @@ exports.promoteStudents = async (req, res) => {
                     const computedPercentage = typeof result.percentage === 'number'
                         ? result.percentage
                         : ((Number(result.marksObtained || 0) / Number(result.maxScore || 100)) * 100);
-                    const passMark = Number(result.passMarkPercent || 40);
+                    const passMark = resolvePassMarkPercent(result);
                     if (status === 'FAIL' || computedPercentage < passMark) {
                         entry.hasFail = true;
                     }
@@ -928,7 +972,7 @@ exports.getClassResults = async (req, res) => {
                 { academicYearId: null }
             ]
         });
-        const passMarkPercent = curriculum?.passMarkPercent || 40;
+        const passMarkPercent = resolvePassMarkPercent(curriculum);
 
         const rows = students.map(student => {
             let totalMarks = 0;
@@ -1049,7 +1093,7 @@ exports.getStudentResults = async (req, res) => {
                 subjectMetaMap.set(subjectId, {
                     subjectId,
                     subjectName: c.subjectId?.name,
-                    passMarkPercent: c.passMarkPercent || 40
+                    passMarkPercent: resolvePassMarkPercent(c)
                 });
             }
         });
@@ -1590,8 +1634,11 @@ exports.getClassSubjects = async (req, res) => {
 
 exports.createClassSubject = async (req, res) => {
     try {
-        const { classId, sectionId, subjectId, totalMarks, passMarks } = req.body;
+        const { classId, sectionId, subjectId, totalMarks = 100, passMarks = 40 } = req.body;
         if (!classId || !subjectId) return sendError(res, 400, 'Class and Subject are required');
+        if (Number(totalMarks) <= 0 || Number(passMarks) < 0 || Number(passMarks) > Number(totalMarks)) {
+            return sendError(res, 400, 'Pass marks must be between 0 and total marks');
+        }
 
         if (classId) {
             const cls = await Class.findOne({ _id: classId, tenantId: req.user.tenantId, branchId: req.user.branchId });
@@ -1622,8 +1669,9 @@ exports.createClassSubject = async (req, res) => {
             classId,
             sectionId: sectionId || null,
             subjectId,
-            totalMarks,
-            passMarks
+            totalMarks: Number(totalMarks),
+            passMarks: Number(passMarks),
+            passMarkPercent: resolvePassMarkPercent({ totalMarks, passMarks })
         });
 
         sendResponse(res, true, classSubject, 'Subject assigned to class successfully');
@@ -1729,6 +1777,7 @@ exports.getExams = async (req, res) => {
             .populate('classId', 'name')
             .populate('subjectId', 'name')
             .populate('academicYearId', 'name')
+            .populate('termId', 'name sequence')
             .sort({ createdAt: -1 });
 
         sendResponse(res, true, exams);
@@ -1746,7 +1795,8 @@ exports.createExam = async (req, res) => {
             classId, // Single ID or "all"
             classIds, // Array of IDs (New)
             subjectId, 
-            date 
+            date,
+            termId
         } = req.body;
 
         if (!examCategoryId || !academicYearId || !subjectId || (!classId && (!classIds || classIds.length === 0))) {
@@ -1771,6 +1821,10 @@ exports.createExam = async (req, res) => {
             const sub = await Subject.findOne({ _id: subjectId, tenantId: req.user.tenantId, branchId: req.user.branchId });
             if (!sub) return sendError(res, 403, 'Access denied for this branch resource.');
         }
+        if (termId) {
+            const term = await Term.findOne({ _id: termId, tenantId: req.user.tenantId, academicYearId, isActive: true });
+            if (!term) return sendError(res, 403, 'Access denied for this academic term.');
+        }
 
         const baseData = {
             tenantId: req.user.tenantId,
@@ -1778,6 +1832,7 @@ exports.createExam = async (req, res) => {
             examCategoryId,
             academicYearId,
             subjectId,
+            termId: termId || null,
             date,
             status: 'Draft'
         };

@@ -22,6 +22,8 @@ const FinancePolicy = require('../models/FinancePolicy');
 const GradingPolicy = require('../models/GradingPolicy');
 const Invoice = require('../models/Invoice');
 const Payment = require('../models/Payment');
+const SubscriptionInvoice = require('../models/SubscriptionInvoice');
+const SubscriptionPayment = require('../models/SubscriptionPayment');
 const TeacherAssignment = require('../models/TeacherAssignment');
 const TimetableSlot = require('../models/TimetableSlot');
 const AttendanceSession = require('../models/AttendanceSession');
@@ -400,6 +402,13 @@ const registerTenant = asyncHandler(async (req, res) => {
         isActive: true,
         isApproved: true,
         subscriptionLimits: limitsFromPlan(plan),
+        billingContactEmail: adminEmail,
+        subscription: {
+            billingCycle: ['monthly', 'yearly'].includes(req.body.billingCycle)
+                ? req.body.billingCycle
+                : (['monthly', 'yearly'].includes(plan.billingCycle) ? plan.billingCycle : 'monthly'),
+            status: 'pending'
+        },
         statusHistory: [{
             status: 'active',
             reason: req.body.approvalReason || 'Created by Platform Admin',
@@ -578,7 +587,8 @@ const getPlatformDashboard = asyncHandler(async (req, res) => {
         totalBranches,
         totalStudents,
         totalUsers,
-        revenueSummary,
+        subscriptionRevenueSummary,
+        subscriptionRevenueTrend,
         recentTenants,
         recentAudit,
         health
@@ -590,8 +600,20 @@ const getPlatformDashboard = asyncHandler(async (req, res) => {
         Branch.countDocuments(),
         Student.countDocuments(),
         User.countDocuments(),
-        Payment.aggregate([
-            { $group: { _id: null, total: { $sum: '$amount' } } }
+        SubscriptionPayment.aggregate([
+            { $match: { status: 'ACTIVE' } },
+            { $group: { _id: null, total: { $sum: '$amount' }, count: { $sum: 1 } } }
+        ]),
+        SubscriptionPayment.aggregate([
+            { $match: { status: 'ACTIVE' } },
+            {
+                $group: {
+                    _id: { $dateToString: { format: '%Y-%m', date: '$createdAt' } },
+                    total: { $sum: '$amount' }
+                }
+            },
+            { $sort: { _id: 1 } },
+            { $limit: 12 }
         ]),
         Tenant.find({}).sort({ createdAt: -1 }).limit(5).lean(),
         AuditLog.find({ scope: 'platform' })
@@ -601,8 +623,8 @@ const getPlatformDashboard = asyncHandler(async (req, res) => {
         buildPlatformHealthPayload()
     ]);
 
-    const totalRevenue = revenueSummary[0]?.total || 0;
     const recentTenantIds = recentTenants.map((tenant) => tenant._id);
+    const totalSubscriptionRevenue = subscriptionRevenueSummary[0]?.total || 0;
     const recentPlanSlugs = [...new Set(recentTenants.map((tenant) => String(tenant.plan || '').toLowerCase()).filter(Boolean))];
 
     const [recentBranchCounts, recentPlans] = await Promise.all([
@@ -628,7 +650,11 @@ const getPlatformDashboard = asyncHandler(async (req, res) => {
         totalBranches,
         totalStudents,
         totalUsers,
-        totalRevenue: toFixedNumber(totalRevenue),
+        totalRevenue: toFixedNumber(totalSubscriptionRevenue),
+        subscriptionRevenue: toFixedNumber(totalSubscriptionRevenue),
+        subscriptionRevenueTracked: true,
+        subscriptionPaymentCount: subscriptionRevenueSummary[0]?.count || 0,
+        subscriptionRevenueTrend,
         healthStatus: health.healthStatus,
         metrics: {
             errorRate: health.errorRate,
@@ -668,11 +694,11 @@ const getPlatformPlans = asyncHandler(async (req, res) => {
     if (plans.length === 0) {
         plans = await Plan.create([
             { 
-              name: 'Basic', slug: 'basic', price: 49, maxBranches: 1, maxStudents: 200, maxUsers: 20, 
+              name: 'Basic', slug: 'basic', price: 49, monthlyPrice: 49, yearlyPrice: 490, maxBranches: 1, maxStudents: 200, maxUsers: 20,
               storage: '10GB', hasPrioritySupport: false, icon: 'Zap', color: 'text-blue-600', bg: 'bg-blue-50' 
             },
             { 
-              name: 'Professional', slug: 'pro', price: 149, maxBranches: 5, maxStudents: 2000, maxUsers: 100, 
+              name: 'Professional', slug: 'pro', price: 149, monthlyPrice: 149, yearlyPrice: 1490, maxBranches: 5, maxStudents: 2000, maxUsers: 100,
               storage: '100GB', hasPrioritySupport: true, icon: 'Star', color: 'text-purple-600', bg: 'bg-purple-50' 
             },
             { 
@@ -689,7 +715,7 @@ const getPlatformPlans = asyncHandler(async (req, res) => {
 // @route   POST /api/platform/plans
 const createPlatformPlan = asyncHandler(async (req, res) => {
     const {
-        name, slug, description, price, billingCycle, maxBranches, maxStudents, maxUsers,
+        name, slug, description, price, monthlyPrice, yearlyPrice, billingCycle, maxBranches, maxStudents, maxUsers,
         storage, storageLimit, features, hasPrioritySupport, icon, color, bg
     } = req.body;
     const normalizedSlug = String(slug || '').trim().toLowerCase();
@@ -705,7 +731,7 @@ const createPlatformPlan = asyncHandler(async (req, res) => {
     }
 
     const plan = await Plan.create({
-        name, slug: normalizedSlug, description, price, billingCycle, maxBranches, maxStudents, maxUsers,
+        name, slug: normalizedSlug, description, price, monthlyPrice, yearlyPrice, billingCycle, maxBranches, maxStudents, maxUsers,
         storage: storageLimit || storage, storageLimit: storageLimit || storage,
         features, hasPrioritySupport, icon, color, bg
     });
@@ -737,7 +763,7 @@ const updatePlatformPlan = asyncHandler(async (req, res) => {
 
     const before = plan.toObject();
     const allowedFields = [
-        'name', 'description', 'price', 'billingCycle', 'maxBranches', 'maxStudents',
+        'name', 'description', 'price', 'monthlyPrice', 'yearlyPrice', 'billingCycle', 'maxBranches', 'maxStudents',
         'maxUsers', 'storage', 'storageLimit', 'features', 'hasPrioritySupport',
         'icon', 'color', 'bg', 'isActive'
     ];
@@ -926,7 +952,7 @@ const getTenantDetails = asyncHandler(async (req, res) => {
         throw new Error('Tenant not found');
     }
 
-    const [branches, studentCount, userCount, tenantAdminPrimary, tenantPlan, branchStudentCounts] = await Promise.all([
+    const [branches, studentCount, userCount, tenantAdminPrimary, tenantPlan, branchStudentCounts, recentSubscriptionInvoices] = await Promise.all([
         Branch.find({ tenantId: tenant._id }).lean(),
         Student.countDocuments({ tenantId: tenant._id }),
         User.countDocuments({ tenantId: tenant._id }),
@@ -935,7 +961,12 @@ const getTenantDetails = asyncHandler(async (req, res) => {
         Student.aggregate([
             { $match: { tenantId: tenant._id } },
             { $group: { _id: '$branchId', count: { $sum: 1 } } }
-        ])
+        ]),
+        SubscriptionInvoice.find({ tenantId: tenant._id })
+            .sort({ createdAt: -1 })
+            .limit(5)
+            .select('invoiceNumber billingCycle periodStart periodEnd dueDate amount paidAmount balance status currency')
+            .lean()
     ]);
 
     const tenantAdmin = tenantAdminPrimary
@@ -986,7 +1017,8 @@ const getTenantDetails = asyncHandler(async (req, res) => {
             students: branchStudentCountMap.get(String(branch._id)) || 0,
             status: branch.isActive ? 'Active' : 'Inactive',
             createdAt: branch.createdAt
-        }))
+        })),
+        recentSubscriptionInvoices
     });
 });
 

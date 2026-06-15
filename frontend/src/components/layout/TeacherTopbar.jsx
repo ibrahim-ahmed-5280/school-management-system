@@ -1,9 +1,32 @@
-import React from 'react';
-import { Bell, Menu, Search, User } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { Bell, Building2, Menu, Search, User } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
+import { getAuthorizedBranches } from '../../services/api/teacher.api';
+import { getStoredTeacherBranchId, setStoredTeacherBranchId } from '../../utils/storage';
 
 const TeacherTopbar = ({ onToggleSidebar }) => {
     const { user } = useAuth();
+    const [branches, setBranches] = useState([]);
+    const [activeBranchId, setActiveBranchId] = useState(() => getStoredTeacherBranchId() || user?.branchId || '');
+
+    useEffect(() => {
+        const loadBranches = async () => {
+            try {
+                const response = await getAuthorizedBranches();
+                const list = response?.data || response || [];
+                setBranches(Array.isArray(list) ? list : []);
+            } catch (error) {
+                console.error('Failed to load authorized teacher branches', error);
+            }
+        };
+        loadBranches();
+    }, []);
+
+    const changeBranch = (branchId) => {
+        setStoredTeacherBranchId(branchId);
+        setActiveBranchId(branchId);
+        window.location.reload();
+    };
 
     return (
         <header className="dashboard-topbar flex items-center justify-between gap-3 px-4 md:px-6">
@@ -28,6 +51,19 @@ const TeacherTopbar = ({ onToggleSidebar }) => {
             </div>
 
             <div className="flex items-center gap-3">
+                {branches.length > 1 && (
+                    <label className="hidden items-center gap-2 rounded-lg border border-[var(--border)] bg-white px-2 py-1.5 md:flex">
+                        <Building2 size={15} className="text-slate-400" />
+                        <select
+                            value={activeBranchId}
+                            onChange={(event) => changeBranch(event.target.value)}
+                            className="max-w-40 bg-transparent text-xs font-semibold text-slate-700 outline-none"
+                            aria-label="Active teaching branch"
+                        >
+                            {branches.map((branch) => <option key={branch._id} value={branch._id}>{branch.name}</option>)}
+                        </select>
+                    </label>
+                )}
                 <button className="relative rounded-lg p-2 text-slate-500 transition hover:bg-slate-100 hover:text-slate-700">
                     <Bell size={18} />
                     <span className="absolute right-1 top-1 h-2 w-2 rounded-full bg-rose-500" />

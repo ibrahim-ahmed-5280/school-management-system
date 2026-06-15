@@ -14,6 +14,7 @@ export const ROUTE_PERMISSION_RULES = [
     rule(/^\/tenant\/branches$/, 'tenant.branches.view'),
     rule(/^\/tenant\/users$/, 'tenant.users.view'),
     rule(/^\/tenant\/academic-years$/, 'tenant.academicYears.view'),
+    rule(/^\/tenant\/academic-policy$/, 'tenant.academicPolicy.view'),
     rule(/^\/tenant\/reports$/, 'tenant.reports.view'),
     rule(/^\/tenant\/enrollments\/promote$/, 'tenant.promotions.run'),
     rule(/^\/tenant\/enrollments\/transfer$/, 'tenant.transfers.run'),

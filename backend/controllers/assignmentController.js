@@ -43,8 +43,10 @@ const assignTeacher = async (req, res) => {
         if (!teacherUser) {
             return res.status(403).json({ message: 'Access denied for this assignment resource.' });
         }
-        // If the teacher has a branch context, verify it matches the target branch
-        if (teacherUser.branchId && teacherUser.branchId.toString() !== targetBranchId.toString()) {
+        const authorizedBranchIds = [teacherUser.branchId, ...(teacherUser.authorizedBranchIds || [])]
+            .filter(Boolean)
+            .map((id) => id.toString());
+        if (!authorizedBranchIds.includes(targetBranchId.toString())) {
             return res.status(403).json({ message: 'Access denied for this assignment resource.' });
         }
 

@@ -8,14 +8,31 @@ const VALID_TRANSITIONS = Object.freeze({
 });
 
 const resolveTenantStatus = (tenant = {}) => {
+    let baseStatus;
     if (VALID_STATUSES.includes(tenant.status)) {
         if (tenant.status === 'pending' && tenant.isApproved === true) {
-            return tenant.isActive ? 'active' : 'suspended';
+            baseStatus = tenant.isActive ? 'active' : 'suspended';
+        } else {
+            baseStatus = tenant.status;
         }
-        return tenant.status;
+    } else if (tenant.isApproved === false) {
+        baseStatus = 'pending';
+    } else {
+        baseStatus = tenant.isActive ? 'active' : 'suspended';
     }
-    if (tenant.isApproved === false) return 'pending';
-    return tenant.isActive ? 'active' : 'suspended';
+
+    if (baseStatus !== 'active') return baseStatus;
+
+    const subscriptionStatus = String(tenant.subscription?.status || '').toLowerCase();
+    if (['suspended', 'cancelled'].includes(subscriptionStatus)) return 'suspended';
+    if (subscriptionStatus === 'past_due') {
+        const graceEndsAt = tenant.subscription?.gracePeriodEndsAt
+            ? new Date(tenant.subscription.gracePeriodEndsAt)
+            : null;
+        if (!graceEndsAt || graceEndsAt <= new Date()) return 'suspended';
+    }
+
+    return baseStatus;
 };
 
 const assertTenantTransition = (tenant, nextStatus) => {

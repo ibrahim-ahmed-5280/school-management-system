@@ -17,6 +17,15 @@ const {
 } = require('../middleware/permissions');
 const { assertTenantTransition, resolveTenantStatus } = require('../services/tenantStatusService');
 const { limitsFromPlan, toPlanLimit } = require('../services/planLimitService');
+const { resolvePassMarkPercent } = require('../utils/grading');
+const {
+    addBillingPeriod,
+    getGracePeriodEndsAt,
+    recordSubscriptionPayment,
+    reconcileSubscriptionStatuses,
+    resolvePlanPrice,
+    reverseSubscriptionPayment
+} = require('../services/subscriptionBillingService');
 
 const createResponse = () => ({
     statusCode: 200,
@@ -193,6 +202,210 @@ test('plan limits normalize unlimited values and copy storage limits', () => {
         maxUsers: 25,
         storageLimit: '20GB'
     });
+});
+
+test('grading pass percentage is derived from pass marks and total marks', () => {
+    assert.equal(resolvePassMarkPercent({ passMarks: 30, totalMarks: 50, passMarkPercent: 40 }), 60);
+    assert.equal(resolvePassMarkPercent({ passMarkPercent: 55 }), 55);
+    assert.equal(resolvePassMarkPercent(null), 40);
+});
+
+test('class subject model synchronizes pass mark percentage during validation', async () => {
+    const ClassSubject = require('../models/ClassSubject');
+    const classSubject = new ClassSubject({
+        tenantId: '507f1f77bcf86cd799439011',
+        branchId: '507f1f77bcf86cd799439012',
+        classId: '507f1f77bcf86cd799439013',
+        subjectId: '507f1f77bcf86cd799439014',
+        passMarks: 30,
+        totalMarks: 50
+    });
+
+    await classSubject.validate();
+    assert.equal(classSubject.passMarkPercent, 60);
+});
+
+test('subscription billing supports distinct monthly and yearly plan prices', () => {
+    assert.equal(resolvePlanPrice({ monthlyPrice: 50, yearlyPrice: 500 }, 'monthly'), 50);
+    assert.equal(resolvePlanPrice({ monthlyPrice: 50, yearlyPrice: 500 }, 'yearly'), 500);
+    assert.equal(resolvePlanPrice({ price: 25 }, 'yearly'), 300);
+
+    const monthly = addBillingPeriod('2026-01-01', 'monthly');
+    const yearly = addBillingPeriod('2026-01-01', 'yearly');
+    assert.equal(monthly.end.toISOString().slice(0, 10), '2026-02-01');
+    assert.equal(yearly.end.toISOString().slice(0, 10), '2027-01-01');
+});
+
+test('subscription payment and reversal update only the platform billing ledger', async () => {
+    const Tenant = require('../models/Tenant');
+    const SubscriptionInvoice = require('../models/SubscriptionInvoice');
+    const SubscriptionPayment = require('../models/SubscriptionPayment');
+    const originalInvoiceFindOne = SubscriptionInvoice.findOne;
+    const originalInvoiceFindById = SubscriptionInvoice.findById;
+    const originalInvoiceUpdateOne = SubscriptionInvoice.updateOne;
+    const originalPaymentCreate = SubscriptionPayment.create;
+    const originalPaymentFindOne = SubscriptionPayment.findOne;
+    const originalPaymentDeleteOne = SubscriptionPayment.deleteOne;
+    const originalPaymentUpdateOne = SubscriptionPayment.updateOne;
+    const originalTenantFindById = Tenant.findById;
+    const originalTenantUpdateOne = Tenant.updateOne;
+    const originalTenantDistinct = Tenant.distinct;
+
+    const invoice = {
+        _id: '507f1f77bcf86cd799439021',
+        tenantId: '507f1f77bcf86cd799439011',
+        amount: 100,
+        paidAmount: 0,
+        balance: 100,
+        status: 'ISSUED',
+        billingCycle: 'monthly',
+        periodStart: new Date('2026-01-01'),
+        periodEnd: new Date('2026-02-01'),
+        dueDate: new Date('2026-01-15'),
+        async save() { return this; }
+    };
+    const tenant = {
+        _id: invoice.tenantId,
+        status: 'active',
+        isActive: true,
+        isApproved: true,
+        subscription: { status: 'pending' },
+        async save() { return this; }
+    };
+    const payment = {
+        _id: '507f1f77bcf86cd799439022',
+        tenantId: invoice.tenantId,
+        invoiceId: invoice._id,
+        amount: 100,
+        method: 'BANK_TRANSFER',
+        reference: 'PLATFORM-REF-1',
+        receiptNumber: 'SUB-REC-1',
+        status: 'ACTIVE',
+        async save() { return this; }
+    };
+
+    try {
+        SubscriptionInvoice.findOne = async (query = {}) => {
+            if (query.dueDate) return invoice.status === 'PAID' ? null : invoice;
+            return invoice;
+        };
+        SubscriptionInvoice.findById = async () => invoice;
+        SubscriptionInvoice.updateOne = async () => ({ acknowledged: true });
+        SubscriptionPayment.create = async (data) => Object.assign(payment, data);
+        SubscriptionPayment.findOne = async (query) => query.createdAt ? null : payment;
+        SubscriptionPayment.deleteOne = async () => ({ acknowledged: true });
+        SubscriptionPayment.updateOne = async () => ({ acknowledged: true });
+        Tenant.findById = async () => tenant;
+        Tenant.updateOne = async () => ({ acknowledged: true });
+        Tenant.distinct = async () => [];
+
+        await assert.rejects(
+            recordSubscriptionPayment({
+                invoiceId: invoice._id,
+                amount: 100,
+                method: 'BANK_TRANSFER',
+                recordedBy: '507f1f77bcf86cd799439023'
+            }),
+            /reference is required/
+        );
+
+        const recorded = await recordSubscriptionPayment({
+            invoiceId: invoice._id,
+            amount: 100,
+            method: 'BANK_TRANSFER',
+            reference: 'PLATFORM-REF-1',
+            recordedBy: '507f1f77bcf86cd799439023'
+        });
+        assert.equal(recorded.invoice.status, 'PAID');
+        assert.equal(recorded.invoice.balance, 0);
+        assert.equal(tenant.subscription.status, 'active');
+
+        const reversed = await reverseSubscriptionPayment({
+            paymentId: payment._id,
+            reason: 'Bank transfer returned',
+            reversedBy: '507f1f77bcf86cd799439023'
+        });
+        assert.equal(reversed.payment.status, 'REVERSED');
+        assert.equal(reversed.invoice.status, 'ISSUED');
+        assert.equal(reversed.invoice.balance, 100);
+    } finally {
+        SubscriptionInvoice.findOne = originalInvoiceFindOne;
+        SubscriptionInvoice.findById = originalInvoiceFindById;
+        SubscriptionInvoice.updateOne = originalInvoiceUpdateOne;
+        SubscriptionPayment.create = originalPaymentCreate;
+        SubscriptionPayment.findOne = originalPaymentFindOne;
+        SubscriptionPayment.deleteOne = originalPaymentDeleteOne;
+        SubscriptionPayment.updateOne = originalPaymentUpdateOne;
+        Tenant.findById = originalTenantFindById;
+        Tenant.updateOne = originalTenantUpdateOne;
+        Tenant.distinct = originalTenantDistinct;
+    }
+});
+
+test('subscription status enforces grace period before suspension', async () => {
+    const Tenant = require('../models/Tenant');
+    const SubscriptionInvoice = require('../models/SubscriptionInvoice');
+    const { resolveTenantStatus } = require('../services/tenantStatusService');
+
+    const originalTenantFindById = Tenant.findById;
+    const originalTenantDistinct = Tenant.distinct;
+    const originalInvoiceFindOne = SubscriptionInvoice.findOne;
+    const originalInvoiceDistinct = SubscriptionInvoice.distinct;
+
+    const tenant = {
+        _id: '507f1f77bcf86cd799439011',
+        status: 'active',
+        isActive: true,
+        isApproved: true,
+        subscription: { status: 'active' },
+        async save() { return this; }
+    };
+
+    try {
+        Tenant.findById = async () => tenant;
+        Tenant.distinct = async () => [];
+        SubscriptionInvoice.distinct = async () => [tenant._id];
+        const now = new Date();
+        const dueDate = new Date(now);
+        dueDate.setUTCDate(dueDate.getUTCDate() - 2);
+        const withinGrace = new Date(now);
+        withinGrace.setUTCDate(withinGrace.getUTCDate() + 1);
+        const afterGrace = new Date(now);
+        afterGrace.setUTCDate(afterGrace.getUTCDate() + 6);
+
+        SubscriptionInvoice.findOne = () => ({
+            sort: async () => ({
+                _id: '507f1f77bcf86cd799439031',
+                tenantId: tenant._id,
+                status: 'ISSUED',
+                dueDate
+            })
+        });
+
+        const graceEnd = getGracePeriodEndsAt(dueDate, 7);
+        assert.ok(graceEnd > now);
+
+        const graceResult = await reconcileSubscriptionStatuses({
+            now: withinGrace,
+            graceDays: 7
+        });
+        assert.equal(graceResult.pastDue, 1);
+        assert.equal(tenant.subscription.status, 'past_due');
+        assert.equal(resolveTenantStatus(tenant), 'active');
+
+        const suspendedResult = await reconcileSubscriptionStatuses({
+            now: afterGrace,
+            graceDays: 7
+        });
+        assert.equal(suspendedResult.suspended, 1);
+        assert.equal(tenant.subscription.status, 'suspended');
+        assert.equal(resolveTenantStatus(tenant), 'suspended');
+    } finally {
+        Tenant.findById = originalTenantFindById;
+        Tenant.distinct = originalTenantDistinct;
+        SubscriptionInvoice.findOne = originalInvoiceFindOne;
+        SubscriptionInvoice.distinct = originalInvoiceDistinct;
+    }
 });
 
 test('public settings payload does not expose secrets', () => {
@@ -1180,6 +1393,7 @@ test('bulk invoice generation target validation and due date saving', async () =
     const MOCK_CLASS = '507f1f77bcf86cd799439013';
     const MOCK_YEAR = '507f1f77bcf86cd799439014';
     const MOCK_STUDENT = '507f1f77bcf86cd799439015';
+    const MOCK_FEE_STRUCTURE = '507f1f77bcf86cd799439017';
 
     try {
         Class.exists = async () => true;
@@ -1215,6 +1429,11 @@ test('bulk invoice generation target validation and due date saving', async () =
         ];
 
         FeeStructure.findOne = async () => ({
+            _id: MOCK_FEE_STRUCTURE,
+            tenantId: MOCK_TENANT,
+            branchId: MOCK_BRANCH,
+            classId: MOCK_CLASS,
+            academicYearId: MOCK_YEAR,
             feeItems: [{ name: 'Tuition', amount: 1000 }],
             totalAmount: 1000
         });
@@ -1243,6 +1462,7 @@ test('bulk invoice generation target validation and due date saving', async () =
         Class.findById = async () => null;
         AcademicYear.findOne = async () => ({ tenantId: MOCK_TENANT });
         req.body.classId = MOCK_CLASS;
+        req.body.feeStructureId = MOCK_FEE_STRUCTURE;
         res = createResponse();
         nextError = null;
         await triggerBulkInvoices(req, res, next);
@@ -1266,6 +1486,18 @@ test('bulk invoice generation target validation and due date saving', async () =
         assert.equal(res.body.success, true);
         assert.equal(createdInvoices.length, 1);
         assert.equal(createdInvoices[0].dueDate.toISOString().slice(0, 10), '2026-12-31');
+        assert.equal(createdInvoices[0].feeStructureId, MOCK_FEE_STRUCTURE);
+        assert.equal(createdInvoices[0].billingPeriodKey, 'YEARLY');
+        assert.equal(createdInvoices[0].billingPeriodLabel, 'Annual');
+
+        // 4. A foreign or mismatched selected fee structure fails closed
+        FeeStructure.findOne = async () => null;
+        res = createResponse();
+        nextError = null;
+        await triggerBulkInvoices(req, res, next);
+        assert.ok(nextError);
+        assert.equal(res.statusCode, 403);
+        assert.match(nextError.message, /Access denied/);
 
     } finally {
         Class.exists = originalClassExists;
@@ -1285,6 +1517,38 @@ test('bulk invoice generation target validation and due date saving', async () =
         Invoice.create = originalInvoiceCreate;
         FeeStructure.findOne = originalFeeStructureFindOne;
         AuditLog.create = originalAuditLogCreate;
+    }
+});
+
+test('payment summary scopes academic year through invoices instead of nonexistent payment field', async () => {
+    const Payment = require('../models/Payment');
+    const { getPaymentsSummary } = require('../controllers/financeController');
+    const originalAggregate = Payment.aggregate;
+    const pipelines = [];
+    const MOCK_TENANT = '507f1f77bcf86cd799439011';
+    const MOCK_YEAR = '507f1f77bcf86cd799439014';
+
+    try {
+        Payment.aggregate = async (pipeline) => {
+            pipelines.push(pipeline);
+            return [];
+        };
+
+        const req = {
+            tenantId: MOCK_TENANT,
+            query: { academicYearId: MOCK_YEAR }
+        };
+        const res = createResponse();
+        await getPaymentsSummary(req, res);
+
+        assert.equal(res.statusCode, 200);
+        assert.equal(pipelines.length, 2);
+        assert.equal(Object.hasOwn(pipelines[0][0].$match, 'academicYearId'), false);
+        assert.deepEqual(pipelines[0][0].$match.status, { $in: ['ACTIVE', 'REVERSAL'] });
+        assert.equal(pipelines[0][1].$lookup.from, 'invoices');
+        assert.equal(String(pipelines[0][3].$match['invoice.academicYearId']), MOCK_YEAR);
+    } finally {
+        Payment.aggregate = originalAggregate;
     }
 });
 
@@ -5463,5 +5727,300 @@ test('cashier reversal authorization guard workflow', async () => {
         Invoice.findOneAndUpdate = originalInvoiceFindOneAndUpdate;
         Payment.create = originalPaymentCreate;
         auditLogService.logAction = originalLogAction;
+    }
+});
+
+test('billing periods preserve annual defaults and split preset schedules exactly', () => {
+    const { getBillingPeriods, resolveBillingPeriod } = require('../utils/billingPeriods');
+
+    const annual = getBillingPeriods({
+        feeItems: [{ name: 'Tuition', amount: 1200 }],
+        totalAmount: 1200
+    });
+    assert.equal(annual.length, 1);
+    assert.equal(annual[0].key, 'YEARLY');
+    assert.equal(annual[0].amount, 1200);
+
+    const monthly = getBillingPeriods({
+        billingFrequency: 'MONTHLY',
+        feeItems: [
+            { name: 'Tuition', amount: 1000 },
+            { name: 'Activities', amount: 100 }
+        ],
+        totalAmount: 1100
+    });
+    assert.equal(monthly.length, 12);
+    assert.equal(monthly.reduce((sum, period) => sum + Math.round(period.amount * 100), 0), 110000);
+    assert.equal(resolveBillingPeriod({ billingFrequency: 'MONTHLY', feeItems: [{ name: 'Tuition', amount: 1200 }] }, 'MONTHLY_2').label, 'Month 2');
+    assert.throws(
+        () => resolveBillingPeriod({ billingFrequency: 'MONTHLY', feeItems: [{ name: 'Tuition', amount: 1200 }] }),
+        /billingPeriodKey is required/
+    );
+});
+
+test('custom billing schedules require valid periods totaling the fee structure', () => {
+    const { normalizeBillingSchedule, resolveBillingPeriod } = require('../utils/billingPeriods');
+
+    const schedule = normalizeBillingSchedule({
+        billingFrequency: 'CUSTOM',
+        totalAmount: 1000,
+        billingPeriods: [
+            { label: 'Admission', amount: 400 },
+            { label: 'Final installment', amount: 600 }
+        ]
+    });
+    assert.deepEqual(schedule.billingPeriods.map(period => period.key), ['CUSTOM_1', 'CUSTOM_2']);
+    assert.equal(resolveBillingPeriod({
+        name: 'Grade 1',
+        ...schedule
+    }, 'CUSTOM_2').amount, 600);
+
+    assert.throws(
+        () => normalizeBillingSchedule({
+            billingFrequency: 'CUSTOM',
+            totalAmount: 1000,
+            billingPeriods: [{ label: 'Only installment', amount: 900 }]
+        }),
+        /must equal/
+    );
+});
+
+test('teacher user model preserves primary branch in authorized branch list', async () => {
+    const User = require('../models/User');
+    const primaryBranchId = new mongoose.Types.ObjectId();
+    const secondaryBranchId = new mongoose.Types.ObjectId();
+    const teacher = new User({
+        tenantId: new mongoose.Types.ObjectId(),
+        branchId: primaryBranchId,
+        authorizedBranchIds: [secondaryBranchId],
+        name: 'Multi Branch Teacher',
+        email: 'multi-branch@example.com',
+        passwordHash: 'password123',
+        role: 'teacher',
+        scope: 'branch'
+    });
+
+    await teacher.validate();
+    assert.deepEqual(
+        teacher.authorizedBranchIds.map(String).sort(),
+        [primaryBranchId, secondaryBranchId].map(String).sort()
+    );
+});
+
+test('teacher assignment permits an explicitly authorized secondary branch only', async () => {
+    const Branch = require('../models/Branch');
+    const Class = require('../models/Class');
+    const AcademicYear = require('../models/AcademicYear');
+    const User = require('../models/User');
+    const Subject = require('../models/Subject');
+    const TeacherAssignment = require('../models/TeacherAssignment');
+    const { assignTeacher } = require('../controllers/assignmentController');
+
+    const originals = {
+        branchFindOne: Branch.findOne,
+        classFindOne: Class.findOne,
+        yearFindOne: AcademicYear.findOne,
+        userFindOne: User.findOne,
+        subjectFindOne: Subject.findOne,
+        assignmentFindOne: TeacherAssignment.findOne,
+        assignmentCreate: TeacherAssignment.create
+    };
+    const tenantId = new mongoose.Types.ObjectId().toString();
+    const primaryBranchId = new mongoose.Types.ObjectId().toString();
+    const secondaryBranchId = new mongoose.Types.ObjectId().toString();
+    const teacherUserId = new mongoose.Types.ObjectId().toString();
+    const classId = new mongoose.Types.ObjectId().toString();
+    const subjectId = new mongoose.Types.ObjectId().toString();
+    const academicYearId = new mongoose.Types.ObjectId().toString();
+
+    try {
+        Branch.findOne = async () => ({ _id: secondaryBranchId });
+        Class.findOne = async () => ({ _id: classId, branchId: secondaryBranchId });
+        AcademicYear.findOne = async () => ({ _id: academicYearId });
+        Subject.findOne = async () => ({ _id: subjectId, branchId: secondaryBranchId });
+        User.findOne = async () => ({
+            _id: teacherUserId,
+            branchId: primaryBranchId,
+            authorizedBranchIds: [primaryBranchId, secondaryBranchId],
+            role: 'teacher'
+        });
+        TeacherAssignment.findOne = () => ({ populate: async () => null });
+        TeacherAssignment.create = async (data) => data;
+
+        const req = {
+            tenantId,
+            branchId: secondaryBranchId,
+            body: { teacherUserId, classId, subjectId, academicYearId }
+        };
+        const res = createResponse();
+        await assignTeacher(req, res);
+        assert.equal(res.statusCode, 201);
+        assert.equal(res.body.branchId, secondaryBranchId);
+
+        User.findOne = async () => ({
+            _id: teacherUserId,
+            branchId: primaryBranchId,
+            authorizedBranchIds: [primaryBranchId],
+            role: 'teacher'
+        });
+        const denied = createResponse();
+        await assignTeacher(req, denied);
+        assert.equal(denied.statusCode, 403);
+    } finally {
+        Branch.findOne = originals.branchFindOne;
+        Class.findOne = originals.classFindOne;
+        AcademicYear.findOne = originals.yearFindOne;
+        User.findOne = originals.userFindOne;
+        Subject.findOne = originals.subjectFindOne;
+        TeacherAssignment.findOne = originals.assignmentFindOne;
+        TeacherAssignment.create = originals.assignmentCreate;
+    }
+});
+
+test('academic policy validation requires complete non-overlapping grading coverage', () => {
+    const { validateRules } = require('../controllers/academicPolicyController');
+
+    assert.deepEqual(validateRules([
+        { min: 70, max: 100, grade: 'A' },
+        { min: 0, max: 69, grade: 'F' }
+    ]), [
+        { min: 0, max: 69, grade: 'F' },
+        { min: 70, max: 100, grade: 'A' }
+    ]);
+
+    assert.throws(() => validateRules([
+        { min: 0, max: 49, grade: 'F' },
+        { min: 51, max: 100, grade: 'P' }
+    ]), /overlap|gaps/);
+
+    assert.throws(() => validateRules([
+        { min: 10, max: 100, grade: 'P' }
+    ]), /complete 0-100/);
+});
+
+test('custom grading rules produce the school-specific letter grade', () => {
+    const { gradeForPercentage } = require('../services/gradingService');
+
+    const rules = [
+        { min: 85, max: 100, grade: 'Distinction' },
+        { min: 50, max: 84, grade: 'Pass' },
+        { min: 0, max: 49, grade: 'Retry' }
+    ];
+
+    assert.equal(gradeForPercentage(92, rules), 'Distinction');
+    assert.equal(gradeForPercentage(72, rules), 'Pass');
+    assert.equal(gradeForPercentage(48, rules), 'Retry');
+});
+
+test('term schema declares tenant and academic-year scoped unique indexes', () => {
+    const Term = require('../models/Term');
+    const indexes = Term.schema.indexes().map(([keys, options]) => ({ keys, options }));
+
+    assert.ok(indexes.some((index) => (
+        index.options?.unique === true
+        && index.keys.tenantId === 1
+        && index.keys.academicYearId === 1
+        && index.keys.name === 1
+    )));
+    assert.ok(indexes.some((index) => (
+        index.options?.unique === true
+        && index.keys.tenantId === 1
+        && index.keys.academicYearId === 1
+        && index.keys.sequence === 1
+    )));
+});
+
+test('branch promotion rejects configured final grade and requires graduation flow', async () => {
+    const AcademicYear = require('../models/AcademicYear');
+    const Class = require('../models/Class');
+    const GradingPolicy = require('../models/GradingPolicy');
+    const { promoteStudents } = require('../controllers/branchAdminController');
+
+    const originals = {
+        yearFindOne: AcademicYear.findOne,
+        classFindOne: Class.findOne,
+        policyFindOne: GradingPolicy.findOne
+    };
+
+    try {
+        AcademicYear.findOne = async () => ({ _id: 'year-1', tenantId: 'tenant-1' });
+        GradingPolicy.findOne = () => ({ lean: async () => ({ finalGradeLevel: '12' }) });
+        Class.findOne = async (query) => ({
+            _id: query._id,
+            tenantId: 'tenant-1',
+            branchId: 'branch-1',
+            name: query._id === 'class-12' ? 'Grade 12' : 'Grade 13',
+            gradeLevel: query._id === 'class-12' ? '12' : '13'
+        });
+
+        const req = {
+            user: { tenantId: 'tenant-1', branchId: 'branch-1' },
+            body: {
+                fromAcademicYearId: 'year-1',
+                toAcademicYearId: 'year-2',
+                rules: { classMap: [{ fromClassId: 'class-12', toClassId: 'class-13' }] }
+            }
+        };
+        const res = createResponse();
+
+        await promoteStudents(req, res);
+
+        assert.equal(res.statusCode, 400);
+        assert.match(res.body.message, /final grade/i);
+    } finally {
+        AcademicYear.findOne = originals.yearFindOne;
+        Class.findOne = originals.classFindOne;
+        GradingPolicy.findOne = originals.policyFindOne;
+    }
+});
+
+test('legacy promotion rejects active final-grade students', async () => {
+    const AcademicYear = require('../models/AcademicYear');
+    const Class = require('../models/Class');
+    const Enrollment = require('../models/Enrollment');
+    const GradingPolicy = require('../models/GradingPolicy');
+    const Student = require('../models/Student');
+    const { promoteStudents } = require('../controllers/promotionController');
+
+    const originals = {
+        yearFindOne: AcademicYear.findOne,
+        classFindOne: Class.findOne,
+        enrollmentFindOne: Enrollment.findOne,
+        policyFindOne: GradingPolicy.findOne,
+        studentFindOne: Student.findOne
+    };
+
+    try {
+        AcademicYear.findOne = async () => ({ _id: 'year-2', tenantId: 'tenant-1' });
+        Class.findOne = async () => ({ _id: 'next-class', tenantId: 'tenant-1', branchId: 'branch-1' });
+        Student.findOne = async () => ({ _id: 'student-1', tenantId: 'tenant-1', branchId: 'branch-1' });
+        GradingPolicy.findOne = () => ({ lean: async () => ({ finalGradeLevel: '12' }) });
+        Enrollment.findOne = () => ({
+            populate: async () => ({
+                classId: { name: 'Grade 12', gradeLevel: '12' }
+            })
+        });
+
+        const req = {
+            tenantId: 'tenant-1',
+            branchId: 'branch-1',
+            body: {
+                studentIds: ['student-1'],
+                nextClassId: 'next-class',
+                nextAcademicYearId: 'year-2'
+            }
+        };
+        const res = createResponse();
+
+        await promoteStudents(req, res);
+
+        assert.equal(res.statusCode, 400);
+        assert.match(res.body.message, /graduation operation/i);
+    } finally {
+        AcademicYear.findOne = originals.yearFindOne;
+        Class.findOne = originals.classFindOne;
+        Enrollment.findOne = originals.enrollmentFindOne;
+        GradingPolicy.findOne = originals.policyFindOne;
+        Student.findOne = originals.studentFindOne;
     }
 });
